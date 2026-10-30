@@ -87,3 +87,10 @@ async def test_create_server_with_write():
     assert tools["send_direct_message"].annotations.idempotent_hint is False
     for name in ("update_post", "add_reaction", "remove_reaction"):
         assert tools[name].annotations.idempotent_hint is True, name
+
+
+def test_server_reports_package_version():
+    from mattermost_mcp import __version__
+
+    assert __version__ == "1.0.0"
+    assert create_server().version == __version__

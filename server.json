@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.toffguy77/mattermost-mcp",
+  "title": "Mattermost",
+  "description": "Mattermost: read unreads, mentions, channels and threads; opt-in posting, edits, reactions",
+  "repository": {
+    "url": "https://github.com/toffguy77/mattermost-mcp",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "mattermost-mcp-server",
+      "version": "1.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "MATTERMOST_URL",
+          "description": "Base URL of your Mattermost server, e.g. https://mattermost.example.com",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "MATTERMOST_ACCESS_TOKEN",
+          "description": "Personal access token or bot token (Profile > Security > Personal Access Tokens)",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "MATTERMOST_ENABLE_WRITE",
+          "description": "Set to 1 to enable posting, replying, editing own posts and reactions (off by default)",
+          "isRequired": false,
+          "format": "boolean"
+        },
+        {
+          "name": "MATTERMOST_TOKEN",
+          "description": "Cookie mode: value of the MMAUTHTOKEN browser cookie (when personal access tokens are unavailable)",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "MATTERMOST_CSRF",
+          "description": "Cookie mode: value of the MMCSRF browser cookie (required for write tools in cookie mode)",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

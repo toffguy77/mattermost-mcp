@@ -1,23 +1,37 @@
 [project]
-name = "mattermost-mcp"
-version = "0.2.0"
-description = "Read-only MCP server for Mattermost with browser-cookie auth"
+name = "mattermost-mcp-server"
+version = "1.0.0"
+description = "MCP server for Mattermost: read channels, threads, unreads and mentions, and (opt-in) post, reply, edit and react. Personal access token or browser-cookie auth."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Thatguy" }]
-keywords = ["mcp", "mattermost", "model-context-protocol", "llm"]
+keywords = ["mcp", "mattermost", "model-context-protocol", "llm", "ai-agents", "claude"]
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "fastmcp>=2.0",
+    "fastmcp>=4.1,<5",
     "httpx[socks]>=0.27",
 ]
 
 [project.scripts]
+mattermost-mcp-server = "mattermost_mcp.server:main"
 mattermost-mcp = "mattermost_mcp.server:main"
 
 [project.urls]
 Repository = "https://github.com/toffguy77/mattermost-mcp"
+Issues = "https://github.com/toffguy77/mattermost-mcp/issues"
+Changelog = "https://github.com/toffguy77/mattermost-mcp/blob/master/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

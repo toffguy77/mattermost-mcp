@@ -67,9 +67,9 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 8. Distribution and docs (spec: distribution)
 
-- [ ] 8.1 `pyproject.toml`: name `mattermost-mcp-server`, version `1.0.0`, both scripts, an updated description and classifiers. Run `uv lock`. `tests/test_packaging.py` checks the scripts and the version. Verify: `uv build` succeeds, and `uvx --from dist/*.whl mattermost-mcp-server` answers an MCP `initialize` (a manual check, recorded in the PR).
-- [ ] 8.2 Add `server.json` (registry schema, PyPI package, stdio, env vars). `tests/test_packaging.py` checks that its name and version match pyproject and that every env var it lists appears in the README. Verify the tests pass.
-- [ ] 8.3 Rewrite the README to cover:
+- [x] 8.1 `pyproject.toml`: name `mattermost-mcp-server`, version `1.0.0`, both scripts, an updated description and classifiers. Run `uv lock`. `tests/test_packaging.py` checks the scripts and the version. Verify: `uv build` succeeds, and `uvx --from dist/*.whl mattermost-mcp-server` answers an MCP `initialize` (a manual check, recorded in the PR).
+- [x] 8.2 Add `server.json` (registry schema, PyPI package, stdio, env vars). `tests/test_packaging.py` checks that its name and version match pyproject and that every env var it lists appears in the README. Verify the tests pass.
+- [x] 8.3 Rewrite the README to cover:
   - pitch;
   - quick start with a PAT and `uvx`;
   - configs for Claude Code, Claude Desktop, Cursor and VS Code;
@@ -81,8 +81,8 @@ Every behaviour task is red → green → refactor: first write the failing test
   - the `mcp-name:` marker.
 
   `tests/test_packaging.py` checks that every tool registered with writes enabled appears in the README table. Verify the test passes.
-- [ ] 8.4 Add `CHANGELOG.md` (1.0.0: Added / Fixed / Changed), `CONTRIBUTING.md` (uv, TDD, ruff, OpenSpec) and `SECURITY.md`. Verify: the files exist and are linked from the README.
-- [ ] 8.5 Add `.github/workflows/publish.yml` (tag `v*` → `uv build` → trusted publishing). Verify: `actionlint`, if available, or a YAML parse passes. Do not tag or publish; that is the owner's action.
+- [x] 8.4 Add `CHANGELOG.md` (1.0.0: Added / Fixed / Changed), `CONTRIBUTING.md` (uv, TDD, ruff, OpenSpec) and `SECURITY.md`. Verify: the files exist and are linked from the README.
+- [x] 8.5 Add `.github/workflows/publish.yml` (tag `v*` → `uv build` → trusted publishing). Verify: `actionlint`, if available, or a YAML parse passes. Do not tag or publish; that is the owner's action.
 
 ## 9. Integration check
 

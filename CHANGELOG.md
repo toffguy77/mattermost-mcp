@@ -4,7 +4,9 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-10-30
+
+First public release.
 
 ### Added
 
@@ -41,7 +43,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Published on PyPI as `mattermost-mcp-server`; run it with
+  `uvx mattermost-mcp-server`. The `mattermost-mcp` command and
+  `python -m mattermost_mcp` still work.
+- Requires FastMCP 4.1+.
 - Channel metadata (teams, channels, membership, sidebar categories) is
   fetched once, concurrently across teams, and cached for 60 seconds
   (`MATTERMOST_CACHE_TTL`). `get_unread` no longer makes one request per
   channel.
+
+## [0.2.0]
+
+Private read-only release with browser-cookie auth.
+
+[1.0.0]: https://github.com/toffguy77/mattermost-mcp/releases/tag/v1.0.0

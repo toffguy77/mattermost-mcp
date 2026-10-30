@@ -1,0 +1,82 @@
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run pytest -q
+      - name: Tag matches package version
+        run: |
+          version=$(uv version --short)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$version"; exit 1; }
+      - run: uv build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mattermost-mcp-server/
+    permissions:
+      id-token: write  # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Create release from the changelog entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
+
+  mcp-registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # GitHub OIDC login to the MCP registry
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+      - name: Wait for the package on PyPI
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            curl -fsS "https://pypi.org/pypi/mattermost-mcp-server/$version/json" >/dev/null && exit 0
+            sleep 10
+          done
+          exit 1
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish

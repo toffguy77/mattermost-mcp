@@ -15,6 +15,7 @@ from typing import Any
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from . import __version__
 from .client import MattermostClient, write_enabled_from_env
 
 _READ = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=True)
@@ -43,7 +44,7 @@ def _as_dict(obj: Any) -> Any:
 
 def create_server(enable_write: bool = False) -> FastMCP:
     """Build a server; write tools are added only when enable_write is True."""
-    server = FastMCP("mattermost", instructions=_INSTRUCTIONS)
+    server = FastMCP("mattermost", version=__version__, instructions=_INSTRUCTIONS)
     client: MattermostClient | None = None
 
     def get_client() -> MattermostClient:
@@ -390,4 +391,4 @@ mcp = create_server(enable_write=False)
 
 def main() -> None:
     server = create_server(enable_write=write_enabled_from_env())
-    server.run()
+    server.run(show_banner=False)
