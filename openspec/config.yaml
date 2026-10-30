@@ -1,0 +1,26 @@
+schema: spec-driven
+
+context: |
+  Read/write MCP server for Mattermost (REST API v4), stdio transport.
+  Tech stack: Python >= 3.11, FastMCP, httpx, uv; tests with pytest,
+  pytest-asyncio, respx. Tests never touch the network or ssh.
+  stdout is the MCP stdio channel: diagnostics go to stderr only.
+  Secrets (tokens, cookies) must never appear in logs or error texts.
+  Compatibility contract: the original eight tools (list_channels,
+  get_channel_posts, get_thread, search_posts, get_direct_messages,
+  get_mentions, get_unread, get_user) and all existing MATTERMOST_*
+  variables keep their names, parameters and response keys. A private agent
+  (Hermes) runs this server over stdio with cookie env vars only.
+  Code, docs and commit messages are in English.
+
+rules:
+  tasks:
+    - "Work test-first (TDD): every behaviour task starts with a failing test, then the minimal code to pass, then refactor"
+    - Each task names the test file it adds or changes
+    - Keep commits small, one task group per commit
+
+operations:
+  apply:
+    guidance:
+      - Red-green-refactor for every task; run the full suite before ticking a task
+      - Never weaken an existing test's expectation unless the task says the old behaviour is a bug
