@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Personal access token / bot token auth (`MATTERMOST_ACCESS_TOKEN`, sent as
+  `Authorization: Bearer`). `MATTERMOST_AUTH_MODE=token|cookie` forces a mode.
+  Cookie auth and its sources (env, cookie host, keychain) are unchanged.
+- Opt-in write mode (`MATTERMOST_ENABLE_WRITE=1`) with `create_post`,
+  `send_direct_message`, `update_post` (own posts only), `add_reaction` and
+  `remove_reaction`. With write mode off these tools are not registered and
+  the HTTP client refuses any mutating request.
+- Read tools `get_me`, `list_teams`, `get_post`, `get_channel` (by ID or
+  name), `search_users`, `get_pinned_posts`, `get_file_info`.
+- `before` parameter on `get_channel_posts` and `get_direct_messages` to page
+  back through history.
+- MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`)
+  on every tool, and server instructions for the model.
+
 ### Fixed
 
 - `get_unread` reported the number of messages the user had already *viewed*

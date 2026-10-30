@@ -87,6 +87,17 @@ def _is_read_only(method: str, path: str) -> bool:
     return method == "POST" and any(p.fullmatch(path) for p in _READ_POSTS)
 
 
+def _user(u: dict) -> User:
+    return User(
+        id=u["id"],
+        username=u.get("username", ""),
+        first_name=u.get("first_name", ""),
+        last_name=u.get("last_name", ""),
+        email=u.get("email", ""),
+        status=u.get("status", ""),
+    )
+
+
 class AuthError(RuntimeError):
     """A 401 that survived the cookie host re-pull. Never swallowed."""
 
@@ -247,6 +258,22 @@ class MattermostClient:
     def _post(self, path: str, body: dict) -> dict | list:
         return self._request("POST", path, json=body)
 
+    def _require_write(self) -> None:
+        # Checked before any lookup a write tool does, so a disabled server
+        # never even resolves users or channels on the way to a refusal.
+        if not self.write_enabled:
+            raise RuntimeError(
+                "write mode is disabled: set MATTERMOST_ENABLE_WRITE=1 to allow posting and editing."
+            )
+
+    def _write(self, method: str, path: str, body=None):
+        """A mutating request; drops the snapshot so the next read sees the change."""
+        self._require_write()
+        try:
+            return self._request(method, path, json=body)
+        finally:
+            self.invalidate_cache()
+
     def _me_user(self) -> dict:
         if self._me is None:
             self._me = self._get("/users/me")
@@ -376,10 +403,13 @@ class MattermostClient:
         channel_id: str,
         since: str | None = None,
         limit: int = 30,
+        before: str | None = None,
     ) -> list[Post]:
         params: dict = {"per_page": limit}
         if since:
             params["since"] = _iso_to_ms(since)
+        if before:
+            params["before"] = before
         data = self._get(f"/channels/{_seg(channel_id)}/posts", **params)
         order = data.get("order", [])
         posts_map = data.get("posts", {})
@@ -458,6 +488,66 @@ class MattermostClient:
         posts = self._search(query, channel_id=channel_id, category=category, include_muted=include_muted)
         return self._enrich_posts_with_usernames(posts[:limit])
 
+    def _posts_from_list(self, data: dict) -> list[Post]:
+        posts_map = data.get("posts", {})
+        posts = [self._parse_post(posts_map[pid]) for pid in data.get("order", []) if pid in posts_map]
+        return self._enrich_posts_with_usernames(posts)
+
+    def get_me(self) -> dict:
+        u = self._me_user()
+        return {
+            **dataclasses.asdict(_user(u)),
+            "nickname": u.get("nickname", ""),
+            "position": u.get("position", ""),
+            "auth_mode": self._auth.mode,
+            "write_enabled": self.write_enabled,
+        }
+
+    def list_teams(self) -> list[dict]:
+        teams = self._get(f"/users/{self._me_user()['id']}/teams")
+        return [{k: t.get(k, "") for k in ("id", "name", "display_name")} for t in teams]
+
+    def get_post(self, post_id: str) -> Post:
+        return self._enrich_posts_with_usernames([self._parse_post(self._get(f"/posts/{_seg(post_id)}"))])[0]
+
+    def get_channel(
+        self,
+        channel_id: str | None = None,
+        team_id: str | None = None,
+        team_name: str | None = None,
+        name: str | None = None,
+    ) -> dict:
+        if channel_id:
+            c = self._get(f"/channels/{_seg(channel_id)}")
+        elif name and team_id:
+            c = self._get(f"/teams/{_seg(team_id)}/channels/name/{_seg(name)}")
+        elif name and team_name:
+            c = self._get(f"/teams/name/{_seg(team_name)}/channels/name/{_seg(name)}")
+        elif name:
+            matches = [c for c in self._channel_index().channels.values() if c.get("name") == name]
+            if not matches:
+                raise RuntimeError(
+                    f"No channel named {name!r} among your channels; pass team_id or team_name "
+                    "to look up a channel you are not a member of."
+                )
+            c = matches[0]
+        else:
+            raise ValueError("get_channel needs channel_id, or name (optionally with team_id or team_name).")
+        keys = ("id", "name", "display_name", "type", "team_id", "header", "purpose")
+        return {k: c.get(k, "") for k in keys}
+
+    def search_users(self, term: str, limit: int = 20) -> list[User]:
+        users = self._post("/users/search", {"term": term, "limit": limit})
+        return [_user(u) for u in users[:limit]]
+
+    def get_pinned_posts(self, channel_id: str) -> list[Post]:
+        return self._posts_from_list(self._get(f"/channels/{_seg(channel_id)}/pinned"))
+
+    def get_file_info(self, file_id: str) -> dict:
+        f = self._get(f"/files/{_seg(file_id)}/info")
+        keys = ("id", "name", "extension", "size", "mime_type", "post_id", "channel_id")
+        return {k: f.get(k, "") for k in keys}
+
     def get_user(self, username: str) -> User:
         try:
             u = self._get(f"/users/username/{_seg(username)}")
@@ -465,25 +555,21 @@ class MattermostClient:
             if "Not found" in str(e):
                 raise RuntimeError(f"User not found: @{username}") from e
             raise
-        return User(
-            id=u["id"],
-            username=u.get("username", ""),
-            first_name=u.get("first_name", ""),
-            last_name=u.get("last_name", ""),
-            email=u.get("email", ""),
-            status=u.get("status", ""),
-        )
+        return _user(u)
+
+    def _dm_channel_id(self, username: str) -> str:
+        target = self.get_user(username)
+        me = self._me_user()
+        return self._post("/channels/direct", [me["id"], target.id])["id"]
 
     def get_direct_messages(
         self,
         username: str,
         limit: int = 30,
         since: str | None = None,
+        before: str | None = None,
     ) -> list[Post]:
-        target = self.get_user(username)
-        me = self._me_user()
-        dm_channel = self._post("/channels/direct", [me["id"], target.id])
-        return self.get_channel_posts(dm_channel["id"], since=since, limit=limit)
+        return self.get_channel_posts(self._dm_channel_id(username), since=since, limit=limit, before=before)
 
     def get_mentions(
         self,
@@ -528,3 +614,67 @@ class MattermostClient:
                 "category": cat,
             })
         return result
+
+    # ------------------------------------------------------------------
+    # Write API (only reachable with write mode on)
+    # ------------------------------------------------------------------
+
+    def _own_post(self, p: dict) -> Post:
+        post = self._parse_post(p)
+        if post.user_id == self._me_user()["id"] and not post.username.startswith("@"):
+            post.username = self._me_user().get("username", post.username)
+        return post
+
+    def create_post(self, channel_id: str, message: str, root_id: str | None = None) -> Post:
+        if not message or not message.strip():
+            raise ValueError("message is empty")
+        body = {"channel_id": channel_id, "message": message}
+        if root_id:
+            body["root_id"] = root_id
+        self._require_write()
+        return self._own_post(self._write("POST", "/posts", body))
+
+    def send_direct_message(self, username: str, message: str) -> Post:
+        if not message or not message.strip():
+            raise ValueError("message is empty")
+        self._require_write()
+        return self.create_post(self._dm_channel_id(username), message)
+
+    def update_post(self, post_id: str, message: str) -> Post:
+        if not message or not message.strip():
+            raise ValueError("message is empty")
+        self._require_write()
+        post = self._get(f"/posts/{_seg(post_id)}")
+        me = self._me_user()
+        if post.get("user_id") != me["id"]:
+            raise RuntimeError(
+                f"Refusing to edit post {post_id}: you can only edit your own posts "
+                f"(it was written by user {post.get('user_id')})."
+            )
+        return self._own_post(self._write("PUT", f"/posts/{_seg(post_id)}/patch", {"message": message}))
+
+    @staticmethod
+    def _emoji(emoji: str) -> str:
+        name = emoji.strip().strip(":")
+        if not name:
+            raise ValueError("emoji is empty")
+        return name
+
+    def add_reaction(self, post_id: str, emoji: str) -> dict:
+        name = self._emoji(emoji)
+        self._require_write()
+        me = self._me_user()
+        self._write("POST", "/reactions", {"user_id": me["id"], "post_id": post_id, "emoji_name": name})
+        return {"post_id": post_id, "emoji": name, "reacted": True}
+
+    def remove_reaction(self, post_id: str, emoji: str) -> dict:
+        name = self._emoji(emoji)
+        self._require_write()
+        me = self._me_user()
+        try:
+            self._write("DELETE", f"/users/{_seg(me['id'])}/posts/{_seg(post_id)}/reactions/{_seg(name)}")
+        except RuntimeError as e:
+            # Removing a reaction that is not there is already the desired state.
+            if not str(e).startswith("Not found"):
+                raise
+        return {"post_id": post_id, "emoji": name, "reacted": False}

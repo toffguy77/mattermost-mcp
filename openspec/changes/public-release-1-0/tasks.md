@@ -46,11 +46,11 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 6. New read tools (spec: read-tools)
 
-- [ ] 6.1 `tests/test_client.py` and `tests/test_server.py`: `get_me` (profile + `auth_mode` + `write_enabled`) and `list_teams`. Implement the client methods and tools with read annotations. Verify the tests pass.
-- [ ] 6.2 `get_post` and `get_channel` (by ID; by team ID + name; by team name + name; error when the arguments are missing), with tests in `tests/test_client.py`. Implement and verify.
-- [ ] 6.3 `search_users`, `get_pinned_posts` and `get_file_info`, with tests in `tests/test_client.py`. Implement and verify.
-- [ ] 6.4 Add the `before` parameter to `get_channel_posts` and `get_direct_messages`, with tests in `tests/test_client.py` that assert the `before` query param is sent. Implement and verify.
-- [ ] 6.5 `tests/test_server.py`:
+- [x] 6.1 `tests/test_client.py` and `tests/test_server.py`: `get_me` (profile + `auth_mode` + `write_enabled`) and `list_teams`. Implement the client methods and tools with read annotations. Verify the tests pass.
+- [x] 6.2 `get_post` and `get_channel` (by ID; by team ID + name; by team name + name; error when the arguments are missing), with tests in `tests/test_client.py`. Implement and verify.
+- [x] 6.3 `search_users`, `get_pinned_posts` and `get_file_info`, with tests in `tests/test_client.py`. Implement and verify.
+- [x] 6.4 Add the `before` parameter to `get_channel_posts` and `get_direct_messages`, with tests in `tests/test_client.py` that assert the `before` query param is sent. Implement and verify.
+- [x] 6.5 `tests/test_server.py`:
   - relax the exact-set test to "superset of the original 8, plus the new read tools";
   - keep `test_no_write_tools` as is;
   - add a test that every read tool has `readOnlyHint=true` and that the original tools' parameter names and defaults are unchanged (snapshot of the input schemas).
@@ -59,11 +59,11 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 7. Write tools (spec: write-tools)
 
-- [ ] 7.1 `tests/test_server.py`: `create_server(enable_write=False)` has no write tools; `create_server(enable_write=True)` has all five, with the specified annotations. Implement `create_server`, `register_write_tools` and the env switch in `main()`. Verify the tests pass.
-- [ ] 7.2 `tests/test_write_tools.py`: `create_post` (in a channel, as a reply, empty message rejected) returns the post shape. Implement and verify.
-- [ ] 7.3 `tests/test_write_tools.py`: `send_direct_message` (opens the DM and posts; unknown user → "User not found", nothing posted). Implement and verify.
-- [ ] 7.4 `tests/test_write_tools.py`: `update_post` on an own post → PATCH sent and the post returned; on another user's post → refused and no PUT made (respx asserts that). Implement D9 and verify.
-- [ ] 7.5 `tests/test_write_tools.py`: `add_reaction` strips colons; `remove_reaction` treats a 404 as success. Successful writes clear the snapshot cache. Implement and verify.
+- [x] 7.1 `tests/test_server.py`: `create_server(enable_write=False)` has no write tools; `create_server(enable_write=True)` has all five, with the specified annotations. Implement `create_server`, `register_write_tools` and the env switch in `main()`. Verify the tests pass.
+- [x] 7.2 `tests/test_write_tools.py`: `create_post` (in a channel, as a reply, empty message rejected) returns the post shape. Implement and verify.
+- [x] 7.3 `tests/test_write_tools.py`: `send_direct_message` (opens the DM and posts; unknown user → "User not found", nothing posted). Implement and verify.
+- [x] 7.4 `tests/test_write_tools.py`: `update_post` on an own post → PATCH sent and the post returned; on another user's post → refused and no PUT made (respx asserts that). Implement D9 and verify.
+- [x] 7.5 `tests/test_write_tools.py`: `add_reaction` strips colons; `remove_reaction` treats a 404 as success. Successful writes clear the snapshot cache. Implement and verify.
 
 ## 8. Distribution and docs (spec: distribution)
 

@@ -1,0 +1,74 @@
+{
+  "get_channel_posts": {
+    "defaults": {
+      "channel_id": null,
+      "limit": 30,
+      "since": null
+    },
+    "required": [
+      "channel_id"
+    ]
+  },
+  "get_direct_messages": {
+    "defaults": {
+      "limit": 30,
+      "since": null,
+      "username": null
+    },
+    "required": [
+      "username"
+    ]
+  },
+  "get_mentions": {
+    "defaults": {
+      "include_muted": true,
+      "limit": 20,
+      "since": null
+    },
+    "required": []
+  },
+  "get_thread": {
+    "defaults": {
+      "post_id": null
+    },
+    "required": [
+      "post_id"
+    ]
+  },
+  "get_unread": {
+    "defaults": {
+      "category": null,
+      "include_muted": false
+    },
+    "required": []
+  },
+  "get_user": {
+    "defaults": {
+      "username": null
+    },
+    "required": [
+      "username"
+    ]
+  },
+  "list_channels": {
+    "defaults": {
+      "category": null,
+      "include_dm": true,
+      "include_muted": true,
+      "team_id": null
+    },
+    "required": []
+  },
+  "search_posts": {
+    "defaults": {
+      "category": null,
+      "channel_id": null,
+      "include_muted": false,
+      "limit": 20,
+      "query": null
+    },
+    "required": [
+      "query"
+    ]
+  }
+}

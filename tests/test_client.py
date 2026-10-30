@@ -450,3 +450,149 @@ def test_enrichment_other_errors_degrade_quietly():
     )
     respx.post("https://mm.example.com/api/v4/users/ids").mock(return_value=Response(500))
     assert client.get_channel_posts("ch1")[0].username == "user1"
+
+
+# ------------------------------------------------------------------
+# new read tools
+# ------------------------------------------------------------------
+
+@respx.mock
+def test_get_me_reports_capabilities():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/users/me").mock(
+        return_value=Response(200, json={"id": "u1", "username": "me", "first_name": "M", "last_name": "E",
+                                         "email": "me@x", "nickname": "", "position": "dev"})
+    )
+    me = client.get_me()
+    assert me["username"] == "me"
+    assert me["auth_mode"] == "cookie"
+    assert me["write_enabled"] is False
+
+
+@respx.mock
+def test_list_teams():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
+        return_value=Response(200, json=[{"id": "t1", "name": "main", "display_name": "Main", "extra": 1}])
+    )
+    assert client.list_teams() == [{"id": "t1", "name": "main", "display_name": "Main"}]
+
+
+@respx.mock
+def test_get_post():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/posts/p1").mock(
+        return_value=Response(200, json=_p("p1", "c1", 5, "hello") | {"metadata": {"sender_name": "@bob"}})
+    )
+    post = client.get_post("p1")
+    assert (post.id, post.message, post.username) == ("p1", "hello", "@bob")
+
+
+_CHANNEL = {"id": "c1", "name": "town-square", "display_name": "Town Square", "type": "O",
+            "team_id": "t1", "header": "h", "purpose": "p", "total_msg_count": 3}
+
+
+@respx.mock
+def test_get_channel_by_id():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/channels/c1").mock(return_value=Response(200, json=_CHANNEL))
+    ch = client.get_channel(channel_id="c1")
+    assert ch == {"id": "c1", "name": "town-square", "display_name": "Town Square", "type": "O",
+                  "team_id": "t1", "header": "h", "purpose": "p"}
+
+
+@respx.mock
+def test_get_channel_by_team_id_and_name():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/teams/t1/channels/name/town-square").mock(
+        return_value=Response(200, json=_CHANNEL)
+    )
+    assert client.get_channel(team_id="t1", name="town-square")["id"] == "c1"
+
+
+@respx.mock
+def test_get_channel_by_team_name_and_name():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/teams/name/main/channels/name/town-square").mock(
+        return_value=Response(200, json=_CHANNEL)
+    )
+    assert client.get_channel(team_name="main", name="town-square")["id"] == "c1"
+
+
+@respx.mock
+def test_get_channel_by_name_only_looks_in_my_channels():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
+        return_value=Response(200, json=[{"id": "t1"}])
+    )
+    respx.get("https://mm.example.com/api/v4/users/user1/teams/t1/channels").mock(
+        return_value=Response(200, json=[_CHANNEL])
+    )
+    respx.get("https://mm.example.com/api/v4/users/user1/channels").mock(return_value=Response(200, json=[]))
+    assert client.get_channel(name="town-square")["id"] == "c1"
+
+
+def test_get_channel_requires_arguments():
+    with pytest.raises(ValueError, match="channel_id"):
+        _make_client().get_channel()
+
+
+@respx.mock
+def test_search_users():
+    client = _make_client()
+    route = respx.post("https://mm.example.com/api/v4/users/search").mock(
+        return_value=Response(200, json=[
+            {"id": f"u{i}", "username": f"ali{i}", "first_name": "", "last_name": "", "email": ""} for i in range(5)
+        ])
+    )
+    users = client.search_users("ali", limit=2)
+    assert [u.username for u in users] == ["ali0", "ali1"]
+    assert json.loads(route.calls.last.request.content)["term"] == "ali"
+
+
+@respx.mock
+def test_get_pinned_posts():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/channels/c1/pinned").mock(
+        return_value=Response(200, json={"order": ["a"], "posts": {"a": _p("a", "c1", 1) | {"metadata": {"sender_name": "@x"}}}})
+    )
+    assert [p.id for p in client.get_pinned_posts("c1")] == ["a"]
+
+
+@respx.mock
+def test_get_file_info():
+    client = _make_client()
+    respx.get("https://mm.example.com/api/v4/files/f1/info").mock(
+        return_value=Response(200, json={"id": "f1", "name": "a.pdf", "extension": "pdf", "size": 10,
+                                         "mime_type": "application/pdf", "post_id": "p", "channel_id": "c",
+                                         "user_id": "u"})
+    )
+    assert client.get_file_info("f1") == {"id": "f1", "name": "a.pdf", "extension": "pdf", "size": 10,
+                                          "mime_type": "application/pdf", "post_id": "p", "channel_id": "c"}
+
+
+@respx.mock
+def test_get_channel_posts_before():
+    client = _make_client()
+    route = respx.get("https://mm.example.com/api/v4/channels/c1/posts").mock(
+        return_value=Response(200, json={"order": [], "posts": {}})
+    )
+    client.get_channel_posts("c1", before="p9")
+    assert route.calls.last.request.url.params["before"] == "p9"
+
+
+@respx.mock
+def test_get_direct_messages_before():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/users/username/bob").mock(
+        return_value=Response(200, json={"id": "u2", "username": "bob", "first_name": "", "last_name": "", "email": ""})
+    )
+    respx.post("https://mm.example.com/api/v4/channels/direct").mock(return_value=Response(201, json={"id": "dm"}))
+    route = respx.get("https://mm.example.com/api/v4/channels/dm/posts").mock(
+        return_value=Response(200, json={"order": [], "posts": {}})
+    )
+    client.get_direct_messages("bob", before="p9")
+    assert route.calls.last.request.url.params["before"] == "p9"
