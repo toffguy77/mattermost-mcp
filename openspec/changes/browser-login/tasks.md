@@ -4,8 +4,8 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 1. Session store
 
-- [ ] 1.1 `tests/test_session.py`: save/load round trip, 0600 file in a 0700 directory, atomic replace, `MATTERMOST_SESSION_FILE` override, delete. Implement `session.py` storage. Verify the tests pass.
-- [ ] 1.2 `tests/test_session.py`: `verify(url, cookies)` returns the user on 200 and raises a clear error on 401; it sends `Cookie` and `X-CSRF-Token`. Implement it. Verify the tests pass.
+- [x] 1.1 `tests/test_session.py`: save/load round trip, 0600 file in a 0700 directory, atomic replace, `MATTERMOST_SESSION_FILE` override, delete. Implement `session.py` storage. Verify the tests pass.
+- [x] 1.2 `tests/test_session.py`: `verify(url, cookies)` returns the user on 200 and raises a clear error on 401; it sends `Cookie` and `X-CSRF-Token`. Implement it. Verify the tests pass.
 
 ## 2. Credential source (spec: authentication)
 

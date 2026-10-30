@@ -23,6 +23,8 @@ _AUTH_VARS = (
     "MATTERMOST_ENABLE_WRITE",
     "MATTERMOST_CACHE_TTL",
     "MATTERMOST_AUTH_HELP",
+    "MATTERMOST_AUTO_LOGIN",
+    "MATTERMOST_BROWSER",
 )
 
 
@@ -30,5 +32,8 @@ _AUTH_VARS = (
 def _no_cookie_host(monkeypatch, tmp_path):
     monkeypatch.setenv("MATTERMOST_COOKIE_HOST", "off")
     monkeypatch.setenv("MATTERMOST_COOKIE_CACHE", str(tmp_path / "cookie.cache"))
+    # Never read or write the developer's real saved session or browser profile.
+    monkeypatch.setenv("MATTERMOST_SESSION_FILE", str(tmp_path / "session.env"))
+    monkeypatch.setenv("MATTERMOST_BROWSER_PROFILE", str(tmp_path / "browser-profile"))
     for var in _AUTH_VARS:
         monkeypatch.delenv(var, raising=False)
