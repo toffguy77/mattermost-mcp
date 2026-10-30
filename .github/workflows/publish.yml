@@ -19,6 +19,9 @@ jobs:
         run: |
           version=$(uv version --short)
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$version"; exit 1; }
+          # server.json is published to the MCP registry after PyPI; a mismatch
+          # there would only surface once the PyPI upload can no longer be redone.
+          jq -e --arg v "$version" '.version == $v and all(.packages[]; .version == $v)' server.json
       - run: uv build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

@@ -108,6 +108,7 @@ def test_add_reaction_strips_colons():
 @respx.mock
 def test_remove_reaction_treats_404_as_done():
     route = respx.delete(f"{_BASE}/users/me1/posts/p1/reactions/thumbsup").mock(return_value=Response(404))
+    respx.get(f"{_BASE}/posts/p1").mock(return_value=Response(200, json=_post()))
     _client().remove_reaction("p1", "thumbsup")
     assert route.called
 
@@ -126,3 +127,11 @@ def test_write_methods_refuse_when_disabled():
         client = MattermostClient(write_enabled=False)
     with pytest.raises(RuntimeError, match="write mode is disabled"):
         client.create_post("c1", "hi")
+
+
+@respx.mock
+def test_remove_reaction_on_missing_post_is_an_error():
+    respx.delete(f"{_BASE}/users/me1/posts/gone/reactions/thumbsup").mock(return_value=Response(404))
+    respx.get(f"{_BASE}/posts/gone").mock(return_value=Response(404))
+    with pytest.raises(RuntimeError, match="Not found"):
+        _client().remove_reaction("gone", "thumbsup")

@@ -98,6 +98,19 @@ def _user(u: dict) -> User:
     )
 
 
+def _auth_headers(auth) -> dict[str, str]:
+    """Headers for exactly one identity: a bearer token or the session cookies."""
+    if auth.mode == "token":
+        return {"Authorization": f"Bearer {auth.access_token}"}
+    cookie = f"MMAUTHTOKEN={auth.token}"
+    if auth.user_id:
+        cookie += f"; MMUSERID={auth.user_id}"
+    headers = {"Cookie": cookie}
+    if auth.csrf:
+        headers["X-CSRF-Token"] = auth.csrf
+    return headers
+
+
 class AuthError(RuntimeError):
     """A 401 that survived the cookie host re-pull. Never swallowed."""
 
@@ -126,6 +139,9 @@ class ChannelIndex:
     channels: dict[str, dict]  # channel_id -> channel, in team order, deduplicated
     members: dict[str, dict]  # channel_id -> channel member of the current user
     category: dict[str, str]  # channel_id -> sidebar category display name
+    # False when a team's membership could not be read: unread and mute state
+    # are then unknown for its channels, not zero.
+    members_complete: bool = True
 
     def muted(self, cid: str) -> bool:
         notify = (self.members.get(cid) or {}).get("notify_props") or {}
@@ -160,14 +176,16 @@ class MattermostClient:
     def __init__(self, write_enabled: bool | None = None) -> None:
         self.write_enabled = write_enabled_from_env() if write_enabled is None else write_enabled
         auth = get_auth()
-        self._auth = auth
         self._base = auth.url + "/api/v4"
 
         self._http = httpx.Client(
             timeout=30.0,
             trust_env=_trust_env(),
         )
-        self._apply_auth(auth)
+        # (auth, headers) swapped as one reference, so a request running in
+        # another pool thread never sees half of an identity switch.
+        self._session = (auth, _auth_headers(auth))
+        self._auth_lock = threading.Lock()
         self._me: dict | None = None
         # One re-auth per client: if a freshly pulled cookie also 401s, the
         # cookie host is stale too and only a human paste fixes it. Retrying
@@ -176,44 +194,34 @@ class MattermostClient:
         self._lock = threading.Lock()
         self._index: ChannelIndex | None = None
         self._index_at = 0.0
+        self._generation = 0  # bumped by every invalidation
         self._pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="mm")
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _apply_auth(self, auth) -> None:
-        # Clear both modes' headers first: a cookie host re-pull may switch
-        # modes, and a request must never carry two identities.
-        for h in ("Authorization", "Cookie", "X-CSRF-Token"):
-            self._http.headers.pop(h, None)
-        if auth.mode == "token":
-            self._http.headers["Authorization"] = f"Bearer {auth.access_token}"
-            return
-        cookie = f"MMAUTHTOKEN={auth.token}"
-        if auth.user_id:
-            cookie += f"; MMUSERID={auth.user_id}"
-        self._http.headers["Cookie"] = cookie
-        if auth.csrf:
-            self._http.headers["X-CSRF-Token"] = auth.csrf
+    def _reauth(self, secret_used: str) -> bool:
+        """Re-pull credentials from the cookie host after a 401.
 
-    def _reauth(self) -> bool:
-        """Re-pull cookies from the cookie host after a 401.
-
-        Returns True only when the token actually changed — otherwise the
-        caller must surface the 401 instead of replaying the same request.
+        Returns True when the caller should retry: either another thread has
+        already swapped in a newer credential than the one that failed, or
+        the re-pull produced a new one. Otherwise the 401 must surface
+        instead of replaying the same request.
         """
-        if self._reauth_tried or not remote_enabled():
-            return False
-        self._reauth_tried = True
-        if not refresh_remote():
-            return False
-        auth = get_auth()
-        if not auth.secret or auth.secret == self._auth.secret:
-            return False
-        self._auth = auth
-        self._base = auth.url + "/api/v4"
-        self._apply_auth(auth)
+        with self._auth_lock:
+            if self._auth.secret != secret_used:
+                return True
+            if self._reauth_tried or not remote_enabled():
+                return False
+            self._reauth_tried = True
+            if not refresh_remote():
+                return False
+            auth = get_auth()
+            if not auth.secret or auth.secret == self._auth.secret:
+                return False
+            self._base = auth.url + "/api/v4"
+            self._session = (auth, _auth_headers(auth))
         self.invalidate_cache()
         return True
 
@@ -231,15 +239,20 @@ class MattermostClient:
                 "or use a personal access token (MATTERMOST_ACCESS_TOKEN)."
             )
 
+    @property
+    def _auth(self):
+        return self._session[0]
+
     def _request(self, method: str, path: str, *, params=None, json=None, _retry: bool = True):
         self._check_write(method, path)
+        auth, headers = self._session
         url = f"{self._base}{path}"
         try:
-            r = self._http.request(method, url, params=params, json=json)
+            r = self._http.request(method, url, params=params, json=json, headers=headers)
         except httpx.TimeoutException:
             raise RuntimeError(f"Request timed out: {url}") from None
         if r.status_code == 401:
-            if _retry and self._reauth():
+            if _retry and self._reauth(auth.secret):
                 return self._request(method, path, params=params, json=json, _retry=False)
             raise AuthError(_auth_401_help(self._auth.mode))
         if r.status_code == 403:
@@ -291,15 +304,20 @@ class MattermostClient:
     def invalidate_cache(self) -> None:
         with self._lock:
             self._index = None
+            self._generation += 1
 
     def _channel_index(self) -> ChannelIndex:
         with self._lock:
             ttl = _cache_ttl()
             if self._index is not None and ttl > 0 and time.monotonic() - self._index_at < ttl:
                 return self._index
+            generation = self._generation
         index = self._build_index()
         with self._lock:
-            self._index, self._index_at = index, time.monotonic()
+            # A write that landed during the build may not be in this
+            # snapshot: use it for this call, but don't cache it.
+            if self._generation == generation and index.members_complete:
+                self._index, self._index_at = index, time.monotonic()
         return index
 
     def _build_index(self) -> ChannelIndex:
@@ -309,7 +327,7 @@ class MattermostClient:
         def per_team(team: dict):
             tid = team["id"]
             channels = self._get(f"/users/{uid}/teams/{tid}/channels")
-            members = self._optional(lambda: self._get(f"/users/{uid}/teams/{tid}/channels/members"), [])
+            members = self._optional(lambda: self._get(f"/users/{uid}/teams/{tid}/channels/members"), None)
             cats = self._optional(lambda: self._get(f"/users/{uid}/teams/{tid}/channels/categories"), {})
             return channels, members, cats
 
@@ -319,10 +337,11 @@ class MattermostClient:
         channels: dict[str, dict] = {}
         members: dict[str, dict] = {}
         category: dict[str, str] = {}
+        members_complete = all(team_members is not None for _, team_members, _ in results)
         for team_channels, team_members, cats in results:
             for c in team_channels:
                 channels.setdefault(c["id"], c)
-            for m in team_members:
+            for m in team_members or []:
                 members.setdefault(m["channel_id"], m)
             for cat in (cats or {}).get("categories", []):
                 name = cat.get("display_name") or cat.get("type", "")
@@ -330,7 +349,10 @@ class MattermostClient:
                     category.setdefault(cid, name)
         for c in dms:
             channels.setdefault(c["id"], c)
-        return ChannelIndex(teams=teams, channels=channels, members=members, category=category)
+        return ChannelIndex(
+            teams=teams, channels=channels, members=members, category=category,
+            members_complete=members_complete,
+        )
 
     def _parse_post(self, p: dict) -> Post:
         reactions = []
@@ -593,6 +615,10 @@ class MattermostClient:
         category: str | None = None,
     ) -> list[dict]:
         index = self._channel_index()
+        if not index.members_complete:
+            # Without membership every count would read as 0, which looks
+            # like a valid "nothing new" answer.
+            raise RuntimeError("Could not read channel membership from Mattermost; unread counts unknown.")
         result: list[dict] = []
         for cid, c in index.channels.items():
             msg_count = index.unread(cid)
@@ -674,7 +700,9 @@ class MattermostClient:
         try:
             self._write("DELETE", f"/users/{_seg(me['id'])}/posts/{_seg(post_id)}/reactions/{_seg(name)}")
         except RuntimeError as e:
-            # Removing a reaction that is not there is already the desired state.
             if not str(e).startswith("Not found"):
                 raise
+            # A missing reaction is already the desired state; a missing post
+            # is an error. This GET raises "Not found" for the latter.
+            self._get(f"/posts/{_seg(post_id)}")
         return {"post_id": post_id, "emoji": name, "reacted": False}

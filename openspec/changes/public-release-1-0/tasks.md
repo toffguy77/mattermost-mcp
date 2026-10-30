@@ -86,4 +86,4 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 9. Integration check
 
-- [ ] 9.1 Run the full suite and ruff clean. Smoke the built wheel over stdio: `tools/list` without `MATTERMOST_ENABLE_WRITE` shows no write tools, and with it shows all of them. Run `openspec validate public-release-1-0 --strict`. Verify: everything is green.
+- [x] 9.1 Run the full suite and ruff clean. Smoke the built wheel over stdio: `tools/list` without `MATTERMOST_ENABLE_WRITE` shows no write tools, and with it shows all of them. Run `openspec validate public-release-1-0 --strict`. Verify: everything is green.

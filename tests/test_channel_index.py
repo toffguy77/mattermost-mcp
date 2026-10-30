@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 import respx
 from httpx import Response
 
@@ -106,3 +107,29 @@ def test_list_channels_reports_unread_count():
     assert by_id["c1"].unread_count == 2
     assert by_id["dm1"].unread_count == 0
     assert len(by_id) == 3  # the DM shows up once, not once per team
+
+
+@respx.mock
+def test_members_failure_is_an_error_not_zero_unread():
+    _mock_workspace()
+    respx.get(f"{_BASE}/users/u1/teams/t1/channels/members").mock(return_value=Response(500))
+    client = _client()
+    with pytest.raises(RuntimeError, match="membership"):
+        client.get_unread()
+    assert client._index is None  # nothing degraded got cached
+
+
+@respx.mock
+def test_invalidation_during_build_is_not_overwritten():
+    _mock_workspace()
+    client = _client()
+    real_build = client._build_index
+
+    def build_then_write():
+        index = real_build()
+        client.invalidate_cache()  # a write lands while the snapshot was being built
+        return index
+
+    client._build_index = build_then_write
+    client._channel_index()
+    assert client._index is None

@@ -78,3 +78,13 @@ def test_cookie_401_message_keeps_help(monkeypatch):
     assert "session cookies" in msg
     assert "run rotate-cookie.sh" in msg
     assert "cookie-secret" not in msg
+
+
+def test_reauth_skips_repull_when_another_thread_already_refreshed():
+    with patch("mattermost_mcp.client.get_auth", return_value=_TOKEN):
+        client = MattermostClient()
+    with patch("mattermost_mcp.client.remote_enabled", return_value=True), \
+         patch("mattermost_mcp.client.refresh_remote") as refresh:
+        # The failing request was sent with an older credential than the current one.
+        assert client._reauth(secret_used="older-token") is True
+    refresh.assert_not_called()
