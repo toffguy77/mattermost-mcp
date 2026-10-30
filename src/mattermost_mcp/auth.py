@@ -63,6 +63,8 @@ import sys
 import time
 from pathlib import Path
 
+from . import session
+
 _DEFAULT_SERVICE = "mattermost-mcp"
 
 # The only fields a cookie host may supply. Anything else in the export is
@@ -89,6 +91,7 @@ class MattermostAuth:
     user_id: str = ""
     mode: str = "cookie"
     access_token: str = ""  # PAT / bot token (token mode)
+    source: str = ""  # where the credential came from: env, cookie-host, session, keychain
 
     @property
     def secret(self) -> str:
@@ -330,12 +333,13 @@ def remote_enabled() -> bool:
 
 _SETUP_HINT = (
     "Set MATTERMOST_URL and MATTERMOST_ACCESS_TOKEN (a personal access token or "
-    "bot token), or MATTERMOST_TOKEN + MATTERMOST_CSRF browser cookies for "
-    "cookie mode. See the README for the cookie host and keychain sources."
+    "bot token), run `mattermost-mcp-server login` to sign in with your "
+    "browser, or set MATTERMOST_TOKEN + MATTERMOST_CSRF browser cookies. See "
+    "the README for the cookie host and keychain sources."
 )
 
 
-def _detect_mode(from_remote) -> str:
+def _detect_mode(from_remote, from_session) -> str:
     """Pick the mode from the highest-priority source that holds a credential."""
     if _env("MATTERMOST_ACCESS_TOKEN"):
         return "token"
@@ -344,6 +348,8 @@ def _detect_mode(from_remote) -> str:
     if from_remote("MATTERMOST_ACCESS_TOKEN"):
         return "token"
     if from_remote("MATTERMOST_TOKEN"):
+        return "cookie"
+    if from_session("MATTERMOST_TOKEN"):
         return "cookie"
     try:
         if _keychain("access_token", required=False):
@@ -371,15 +377,45 @@ def get_auth() -> MattermostAuth:
             remote = remote_creds()
         return remote.get(key, "")
 
+    saved: dict[str, str] | None = None
+
+    def _from_session(key: str) -> str:
+        """The `login` session, only as a whole and only for its own server.
+
+        Never mixed with a credential from a higher source (an env cookie
+        with the session's CSRF would be a broken identity), and never sent
+        to a different MATTERMOST_URL.
+        """
+        nonlocal saved
+        if saved is None:
+            saved = {}
+            higher = ("MATTERMOST_ACCESS_TOKEN", "MATTERMOST_TOKEN")
+            if not any(_env(k) or _from_remote(k) for k in higher):
+                candidate = session.load()
+                configured = (_env("MATTERMOST_URL") or _from_remote("MATTERMOST_URL")).rstrip("/")
+                if candidate.get("MATTERMOST_TOKEN") and (
+                    not configured or configured == candidate.get("MATTERMOST_URL", "")
+                ):
+                    saved = candidate
+        return saved.get(key, "")
+
+    sources: dict[str, str] = {}
+
     def _pick(env_key: str, account: str, required: bool = True) -> str:
         value = _env(env_key)
         if value:
+            sources[env_key] = "env"
             return value
         value = _from_remote(env_key)
         if value:
+            sources[env_key] = "cookie-host"
+            return value
+        value = _from_session(env_key)
+        if value:
+            sources[env_key] = "session"
             return value
         try:
-            return _keychain(account, required=required)
+            value = _keychain(account, required=required)
         except RuntimeError as e:
             if not remote_enabled():
                 raise
@@ -388,19 +424,28 @@ def get_auth() -> MattermostAuth:
                 f"  ...and the cookie host ({_remote_host()}:{_remote_path()}) gave "
                 f"nothing either — check `ssh {_remote_host()} cat {_remote_path()}`."
             ) from e
+        if value:
+            sources[env_key] = "keychain"
+        return value
 
     try:
-        mode = explicit or _detect_mode(_from_remote)
+        mode = explicit or _detect_mode(_from_remote, _from_session)
         url = _pick("MATTERMOST_URL", "url").rstrip("/")
         if mode == "token":
             access_token = _pick("MATTERMOST_ACCESS_TOKEN", "access_token")
-            return MattermostAuth(url=url, mode="token", access_token=access_token)
+            return MattermostAuth(
+                url=url, mode="token", access_token=access_token,
+                source=sources.get("MATTERMOST_ACCESS_TOKEN", ""),
+            )
         token = _pick("MATTERMOST_TOKEN", "token")
         csrf = _pick("MATTERMOST_CSRF", "csrf", required=False)
         user_id = _pick("MATTERMOST_USER_ID", "user_id", required=False)
     except RuntimeError as e:
         raise RuntimeError(f"{e}\n{_SETUP_HINT}") from e
-    return MattermostAuth(url=url, token=token, csrf=csrf, user_id=user_id)
+    return MattermostAuth(
+        url=url, token=token, csrf=csrf, user_id=user_id,
+        source=sources.get("MATTERMOST_TOKEN", ""),
+    )
 
 
 # Legacy shim used by tests

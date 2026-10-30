@@ -9,7 +9,7 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 2. Credential source (spec: authentication)
 
-- [ ] 2.1 `tests/test_auth_session.py`:
+- [x] 2.1 `tests/test_auth_session.py`:
   - zero-config start from the session file;
   - a session for a different `MATTERMOST_URL` is ignored;
   - env token wins;
