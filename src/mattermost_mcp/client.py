@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -55,6 +56,33 @@ def _auth_401_help(mode: str = "cookie") -> str:
     return f"{base}\n{extra}" if extra else base
 
 
+# POSTs that only read. Everything else that is not a GET mutates and needs
+# write mode. Matched against the whole path, so "../" tricks cannot pass.
+# /channels/direct creates the DM channel if it does not exist yet; that was
+# already the case for get_direct_messages and is the one documented exception.
+_READ_POSTS = tuple(
+    re.compile(p)
+    for p in (
+        r"/users/ids",
+        r"/users/search",
+        r"/teams/[A-Za-z0-9]+/posts/search",
+        r"/channels/direct",
+    )
+)
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def write_enabled_from_env() -> bool:
+    return os.environ.get("MATTERMOST_ENABLE_WRITE", "").strip().lower() in _TRUTHY
+
+
+def _is_read_only(method: str, path: str) -> bool:
+    if method == "GET":
+        return True
+    return method == "POST" and any(p.fullmatch(path) for p in _READ_POSTS)
+
+
 def _trust_env() -> bool:
     # Off when Mattermost must be reached directly while the process env
     # carries a proxy meant for everything else.
@@ -62,7 +90,8 @@ def _trust_env() -> bool:
 
 
 class MattermostClient:
-    def __init__(self) -> None:
+    def __init__(self, write_enabled: bool | None = None) -> None:
+        self.write_enabled = write_enabled_from_env() if write_enabled is None else write_enabled
         auth = get_auth()
         self._auth = auth
         self._base = auth.url + "/api/v4"
@@ -116,7 +145,22 @@ class MattermostClient:
         self._apply_auth(auth)
         return True
 
+    def _check_write(self, method: str, path: str) -> None:
+        if _is_read_only(method, path):
+            return
+        if not self.write_enabled:
+            raise RuntimeError(
+                f"Refusing {method} {path}: write mode is disabled. "
+                "Set MATTERMOST_ENABLE_WRITE=1 to allow posting and editing."
+            )
+        if self._auth.mode == "cookie" and not self._auth.csrf:
+            raise RuntimeError(
+                "Write tools in cookie mode need the MMCSRF cookie: set MATTERMOST_CSRF, "
+                "or use a personal access token (MATTERMOST_ACCESS_TOKEN)."
+            )
+
     def _request(self, method: str, path: str, *, params=None, json=None, _retry: bool = True):
+        self._check_write(method, path)
         url = f"{self._base}{path}"
         try:
             r = self._http.request(method, url, params=params, json=json)

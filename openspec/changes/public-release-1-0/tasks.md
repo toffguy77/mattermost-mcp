@@ -27,8 +27,8 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 3. Write guard (spec: write-tools, "Write mode is opt-in")
 
-- [ ] 3.1 `tests/test_write_guard.py`: with writes disabled, PUT, DELETE and `POST /posts` raise before any HTTP call (assert respx saw no call). The allowlisted POSTs (`/users/ids`, `/users/search`, `/teams/x/posts/search`, `/channels/direct`) still go through. Implement the `write_enabled` flag and the D6 guard. Verify the tests pass.
-- [ ] 3.2 `tests/test_write_guard.py`: in cookie mode with writes enabled and no CSRF, a write raises an error mentioning `MATTERMOST_CSRF` and nothing is sent. Verify the test passes.
+- [x] 3.1 `tests/test_write_guard.py`: with writes disabled, PUT, DELETE and `POST /posts` raise before any HTTP call (assert respx saw no call). The allowlisted POSTs (`/users/ids`, `/users/search`, `/teams/x/posts/search`, `/channels/direct`) still go through. Implement the `write_enabled` flag and the D6 guard. Verify the tests pass.
+- [x] 3.2 `tests/test_write_guard.py`: in cookie mode with writes enabled and no CSRF, a write raises an error mentioning `MATTERMOST_CSRF` and nothing is sent. Verify the test passes.
 
 ## 4. Metadata snapshot, unread fix, performance (spec: read-tools)
 
