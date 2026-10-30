@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -352,3 +353,100 @@ def test_dot_segments_are_refused(bad):
     client = _make_client()
     with pytest.raises(ValueError, match="invalid path argument"):
         client.get_thread(post_id=bad)
+
+
+# ------------------------------------------------------------------
+# search fixes
+# ------------------------------------------------------------------
+
+def _p(pid, cid, at, msg="hit"):
+    return {"id": pid, "channel_id": cid, "user_id": "user1", "create_at": at, "message": msg, "metadata": {}}
+
+
+@respx.mock
+def test_search_scoped_to_public_channel_uses_name_and_filters():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/channels/ch1").mock(
+        return_value=Response(200, json={"id": "ch1", "name": "general", "type": "O", "team_id": "team1"})
+    )
+    search = respx.post("https://mm.example.com/api/v4/teams/team1/posts/search").mock(
+        return_value=Response(200, json={"order": ["a", "b"], "posts": {"a": _p("a", "ch1", 2), "b": _p("b", "other", 3)}})
+    )
+    results = client.search_posts("deploy", channel_id="ch1")
+    assert [p.id for p in results] == ["a"]
+    assert json.loads(search.calls.last.request.content)["terms"] == "in:general deploy"
+
+
+@respx.mock
+def test_search_scoped_to_dm_searches_all_teams_and_filters():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/channels/dm1").mock(
+        return_value=Response(200, json={"id": "dm1", "name": "user1__user2", "type": "D", "team_id": ""})
+    )
+    respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
+        return_value=Response(200, json=[{"id": "team1"}])
+    )
+    respx.post("https://mm.example.com/api/v4/teams/team1/posts/search").mock(
+        return_value=Response(200, json={"order": ["a", "b"], "posts": {"a": _p("a", "dm1", 2), "b": _p("b", "x", 3)}})
+    )
+    assert [p.id for p in client.search_posts("deploy", channel_id="dm1")] == ["a"]
+
+
+@respx.mock
+def test_search_dedupes_across_teams_and_sorts_newest_first():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
+        return_value=Response(200, json=[{"id": "team1"}, {"id": "team2"}])
+    )
+    dm = _p("dm_post", "dm1", 5)
+    respx.post("https://mm.example.com/api/v4/teams/team1/posts/search").mock(
+        return_value=Response(200, json={"order": ["old", "dm_post"], "posts": {"old": _p("old", "c1", 1), "dm_post": dm}})
+    )
+    respx.post("https://mm.example.com/api/v4/teams/team2/posts/search").mock(
+        return_value=Response(200, json={"order": ["dm_post", "new"], "posts": {"dm_post": dm, "new": _p("new", "c2", 9)}})
+    )
+    results = client.search_posts("hit", include_muted=True)
+    assert [p.id for p in results] == ["new", "dm_post", "old"]
+
+
+@respx.mock
+def test_mentions_filter_since_before_limit():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
+        return_value=Response(200, json=[{"id": "team1"}])
+    )
+    # 25 old mentions, 5 recent ones; the server returns them oldest first.
+    posts = {f"p{i}": _p(f"p{i}", "c1", 1_000 + i) for i in range(25)}
+    posts.update({f"r{i}": _p(f"r{i}", "c1", 1_700_000_000_000 + i) for i in range(5)})
+    respx.post("https://mm.example.com/api/v4/teams/team1/posts/search").mock(
+        return_value=Response(200, json={"order": list(posts), "posts": posts})
+    )
+    results = client.get_mentions(since="2023-11-14T00:00:00Z", limit=3)
+    assert [p.id for p in results] == ["r4", "r3", "r2"]
+
+
+@respx.mock
+def test_enrichment_does_not_swallow_401():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/channels/ch1/posts").mock(
+        return_value=Response(200, json={"order": ["p1"], "posts": {"p1": _p("p1", "ch1", 1)}})
+    )
+    respx.post("https://mm.example.com/api/v4/users/ids").mock(return_value=Response(401))
+    with pytest.raises(RuntimeError, match="401"):
+        client.get_channel_posts("ch1")
+
+
+@respx.mock
+def test_enrichment_other_errors_degrade_quietly():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+    respx.get("https://mm.example.com/api/v4/channels/ch1/posts").mock(
+        return_value=Response(200, json={"order": ["p1"], "posts": {"p1": _p("p1", "ch1", 1)}})
+    )
+    respx.post("https://mm.example.com/api/v4/users/ids").mock(return_value=Response(500))
+    assert client.get_channel_posts("ch1")[0].username == "user1"

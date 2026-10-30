@@ -39,10 +39,10 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 5. Read-tool fixes (spec: read-tools)
 
-- [ ] 5.1 `tests/test_client.py`: channel-scoped search returns only that channel's posts, for both an `O` channel (one team searched with `in:<name>`) and a `D` channel. Implement D8 and verify.
-- [ ] 5.2 `tests/test_client.py`: a DM post returned by two teams appears once, and results are sorted newest first. Implement and verify.
-- [ ] 5.3 `tests/test_client.py`: `get_mentions(since, limit)` with 30 results, 5 of them after `since`, and `limit=3` → 3 recent posts. Implement filter-then-limit and verify.
-- [ ] 5.4 `tests/test_client.py`: a 401 during username enrichment propagates, and other errors still degrade quietly. Implement and verify.
+- [x] 5.1 `tests/test_client.py`: channel-scoped search returns only that channel's posts, for both an `O` channel (one team searched with `in:<name>`) and a `D` channel. Implement D8 and verify.
+- [x] 5.2 `tests/test_client.py`: a DM post returned by two teams appears once, and results are sorted newest first. Implement and verify.
+- [x] 5.3 `tests/test_client.py`: `get_mentions(since, limit)` with 30 results, 5 of them after `since`, and `limit=3` → 3 recent posts. Implement filter-then-limit and verify.
+- [x] 5.4 `tests/test_client.py`: a 401 during username enrichment propagates, and other errors still degrade quietly. Implement and verify.
 
 ## 6. New read tools (spec: read-tools)
 

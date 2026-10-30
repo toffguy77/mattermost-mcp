@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format follows
 - `list_channels` now fills `unread_count` (it was always 0).
 - Direct and group messages no longer appear once per team in `get_unread`
   and `list_channels`.
+- `search_posts(channel_id=…)` now really searches that channel: `in:` needs a
+  channel name, not an ID.
+- Search results are deduplicated across teams and sorted newest first.
+- `get_mentions` applies `since` before `limit`, so old mentions no longer
+  crowd out recent ones.
+- A 401 while resolving usernames is reported instead of silently ignored.
 
 ### Changed
 

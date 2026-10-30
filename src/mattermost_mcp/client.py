@@ -327,14 +327,11 @@ class MattermostClient:
         user_ids = {p.user_id for p in posts if p.user_id and not p.username.startswith("@")}
         if not user_ids:
             return posts
-        try:
-            users_data = self._post("/users/ids", list(user_ids))
-            id_to_username = {u["id"]: u["username"] for u in users_data}
-            for p in posts:
-                if p.user_id in id_to_username and not p.username.startswith("@"):
-                    p.username = id_to_username[p.user_id]
-        except Exception:
-            pass
+        users_data = self._optional(lambda: self._post("/users/ids", list(user_ids)), [])
+        id_to_username = {u["id"]: u["username"] for u in users_data}
+        for p in posts:
+            if p.user_id in id_to_username and not p.username.startswith("@"):
+                p.username = id_to_username[p.user_id]
         return posts
 
     # ------------------------------------------------------------------
@@ -401,6 +398,55 @@ class MattermostClient:
         replies = [p for p in all_posts if p.id != (root.id if root else None)]
         return Thread(root=root or all_posts[0], replies=replies)
 
+    def _search_team(self, team_id: str, terms: str) -> dict:
+        return self._post(f"/teams/{_seg(team_id)}/posts/search", {"terms": terms, "is_or_search": False})
+
+    def _search(
+        self,
+        query: str,
+        channel_id: str | None = None,
+        category: str | None = None,
+        include_muted: bool = False,
+        since_ms: int | None = None,
+    ) -> list[Post]:
+        """All matching posts, deduplicated, filtered, newest first (no limit)."""
+        if channel_id:
+            # `in:` takes a channel *name* and only within the searched team.
+            # DMs and group messages have no team, so search everywhere and
+            # rely on the channel_id filter below.
+            ch = self._get(f"/channels/{_seg(channel_id)}")
+            if ch.get("team_id") and ch.get("type") in ("O", "P"):
+                jobs = [(ch["team_id"], f"in:{ch['name']} {query}")]
+            else:
+                jobs = [(t["id"], query) for t in self._get(f"/users/{self._me_user()['id']}/teams")]
+        else:
+            # Mattermost's `in:` filter can't carry hundreds of channel names,
+            # so category/muted filtering happens client-side.
+            jobs = [(t["id"], query) for t in self._get(f"/users/{self._me_user()['id']}/teams")]
+
+        results = list(self._pool.map(lambda job: self._search_team(*job), jobs))
+
+        seen: dict[str, Post] = {}
+        for data in results:
+            posts_map = data.get("posts", {})
+            for pid in data.get("order", []):
+                if pid in posts_map and pid not in seen:
+                    seen[pid] = self._parse_post(posts_map[pid])
+        posts = sorted(seen.values(), key=lambda p: p.create_at, reverse=True)
+
+        if channel_id:
+            posts = [p for p in posts if p.channel_id == channel_id]
+        elif category is not None or not include_muted:
+            index = self._channel_index()
+            posts = [
+                p for p in posts
+                if (include_muted or not index.muted(p.channel_id))
+                and (category is None or (index.category.get(p.channel_id) or "").lower() == category.lower())
+            ]
+        if since_ms is not None:
+            posts = [p for p in posts if p.create_at >= since_ms]
+        return posts
+
     def search_posts(
         self,
         query: str,
@@ -409,37 +455,8 @@ class MattermostClient:
         include_muted: bool = False,
         limit: int = 20,
     ) -> list[Post]:
-        search_query = query
-        if channel_id:
-            search_query = f"in:{channel_id} {query}"
-
-        # Server-side search across all teams the user has access to.
-        # Mattermost's `in:` filter can't carry hundreds of channel names,
-        # so we filter by category/muted client-side after the fact.
-        teams = self._get(f"/users/{self._me_user()['id']}/teams")
-        order: list[str] = []
-        posts_map: dict = {}
-        for team in teams:
-            data = self._post(
-                f"/teams/{team['id']}/posts/search",
-                {"terms": search_query, "is_or_search": False},
-            )
-            order.extend(data.get("order", []))
-            posts_map.update(data.get("posts", {}))
-
-        posts = [self._parse_post(posts_map[pid]) for pid in order if pid in posts_map]
-
-        if channel_id is None and (category is not None or not include_muted):
-            channels = self.list_channels(include_muted=True)
-            allowed = {
-                c.id for c in channels
-                if (include_muted or not c.muted)
-                and (category is None or (c.category or "").lower() == category.lower())
-            }
-            posts = [p for p in posts if p.channel_id in allowed]
-
-        posts = posts[:limit]
-        return self._enrich_posts_with_usernames(posts)
+        posts = self._search(query, channel_id=channel_id, category=category, include_muted=include_muted)
+        return self._enrich_posts_with_usernames(posts[:limit])
 
     def get_user(self, username: str) -> User:
         try:
@@ -477,12 +494,12 @@ class MattermostClient:
         # Mentions are intentionally surfaced from muted channels by default —
         # mute hides the unread badge in the client, not @-mentions.
         me = self._me_user()
-        query = f"@{me['username']}"
-        posts = self.search_posts(query, include_muted=include_muted, limit=limit)
-        if since:
-            since_ms = _iso_to_ms(since)
-            posts = [p for p in posts if p.create_at >= since_ms]
-        return posts
+        posts = self._search(
+            f"@{me['username']}",
+            include_muted=include_muted,
+            since_ms=_iso_to_ms(since) if since else None,
+        )
+        return self._enrich_posts_with_usernames(posts[:limit])
 
     def get_unread(
         self,
