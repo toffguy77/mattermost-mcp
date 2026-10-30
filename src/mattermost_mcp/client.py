@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import httpx
@@ -29,7 +29,7 @@ def _iso_to_ms(iso: str) -> int:
     """Convert ISO 8601 string to Unix milliseconds."""
     dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return int(dt.timestamp() * 1000)
 
 
@@ -108,7 +108,7 @@ class MattermostClient:
         try:
             r = self._http.request(method, url, params=params, json=json)
         except httpx.TimeoutException:
-            raise RuntimeError(f"Request timed out: {url}")
+            raise RuntimeError(f"Request timed out: {url}") from None
         if r.status_code == 401:
             if _retry and self._reauth():
                 return self._request(method, path, params=params, json=json, _retry=False)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import patch
 
 import pytest
@@ -31,7 +30,6 @@ def test_auth_missing_keychain_raises():
 
 
 def test_auth_missing_includes_bootstrap_command():
-    import sys
     platform = "darwin"
     with patch("mattermost_mcp.auth.sys") as mock_sys:
         mock_sys.platform = platform

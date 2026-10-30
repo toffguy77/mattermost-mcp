@@ -4,7 +4,7 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 1. Tooling
 
-- [ ] 1.1 Add ruff to the dev group and `[tool.ruff]` in `pyproject.toml`, fix the existing lint findings, and add a `ruff check` step to `.github/workflows/test.yml`. Verify: `uv run ruff check` is clean and `uv run pytest` is green.
+- [x] 1.1 Add ruff to the dev group and `[tool.ruff]` in `pyproject.toml`, fix the existing lint findings, and add a `ruff check` step to `.github/workflows/test.yml`. Verify: `uv run ruff check` is clean and `uv run pytest` is green.
 
 ## 2. Authentication (spec: authentication)
 
