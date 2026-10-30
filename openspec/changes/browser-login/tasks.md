@@ -48,7 +48,7 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 6. Refresh on 401 (spec: authentication)
 
-- [ ] 6.1 `tests/test_client_relogin.py`:
+- [x] 6.1 `tests/test_client_relogin.py`:
   - 401 plus a newer token in the session file → retried without a browser;
   - 401 plus auto login on → login called once and the request retried;
   - auto login off → error mentions `mattermost-mcp-server login`;

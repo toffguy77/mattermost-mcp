@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 import httpx
 
+from . import browser_login, session
 from .auth import get_auth, refresh_remote, remote_enabled
 from .models import Channel, Post, Thread, User
 
@@ -53,8 +54,14 @@ _TOKEN_401_HELP = (
 )
 
 
+_LOGIN_HINT = (
+    "If you signed in with `mattermost-mcp-server login`, run it again "
+    "(or set MATTERMOST_AUTO_LOGIN=1 to get a sign-in window automatically)."
+)
+
+
 def _auth_401_help(mode: str = "cookie") -> str:
-    base = _TOKEN_401_HELP if mode == "token" else _AUTH_401_HELP
+    base = _TOKEN_401_HELP if mode == "token" else f"{_AUTH_401_HELP}\n{_LOGIN_HINT}"
     # Deployments wire credential rotation differently; let them say how theirs works.
     extra = os.environ.get("MATTERMOST_AUTH_HELP", "").strip()
     return f"{base}\n{extra}" if extra else base
@@ -166,6 +173,33 @@ class ChannelIndex:
         return m.get("mention_count_root", m.get("mention_count", 0)) or 0
 
 
+def _auto_login_enabled() -> bool:
+    return os.environ.get("MATTERMOST_AUTO_LOGIN", "").strip().lower() in _TRUTHY
+
+
+def _login_timeout() -> float:
+    try:
+        return float(os.environ.get("MATTERMOST_LOGIN_TIMEOUT", "").strip() or 300)
+    except ValueError:
+        return 300.0
+
+
+def _initial_auth():
+    """Resolve credentials; with auto login on, sign in if there are none."""
+    try:
+        return get_auth()
+    except RuntimeError:
+        url = os.environ.get("MATTERMOST_URL", "").strip() or session.load().get("MATTERMOST_URL", "")
+        if not (_auto_login_enabled() and url):
+            raise
+    with session.login_lock():
+        try:
+            return get_auth()  # another server process may have just signed in
+        except RuntimeError:
+            browser_login.login(url, timeout=_login_timeout())
+    return get_auth()
+
+
 def _trust_env() -> bool:
     # Off when Mattermost must be reached directly while the process env
     # carries a proxy meant for everything else.
@@ -175,7 +209,7 @@ def _trust_env() -> bool:
 class MattermostClient:
     def __init__(self, write_enabled: bool | None = None) -> None:
         self.write_enabled = write_enabled_from_env() if write_enabled is None else write_enabled
-        auth = get_auth()
+        auth = _initial_auth()
         self._base = auth.url + "/api/v4"
 
         self._http = httpx.Client(
@@ -191,6 +225,9 @@ class MattermostClient:
         # cookie host is stale too and only a human paste fixes it. Retrying
         # further would just add ssh round-trips to every call.
         self._reauth_tried = False
+        # A sign-in window that timed out or was closed is not reopened on
+        # every later call; the user is told to run `login` instead.
+        self._auto_login_failed = False
         self._lock = threading.Lock()
         self._index: ChannelIndex | None = None
         self._index_at = 0.0
@@ -201,27 +238,54 @@ class MattermostClient:
     # Internals
     # ------------------------------------------------------------------
 
-    def _reauth(self, secret_used: str) -> bool:
-        """Re-pull credentials from the cookie host after a 401.
+    def _newer_auth(self, current):
+        """Credentials resolved now, if they differ from the ones that failed."""
+        try:
+            auth = get_auth()
+        except RuntimeError:
+            return None
+        return auth if auth.secret and auth.secret != current.secret else None
 
-        Returns True when the caller should retry: either another thread has
-        already swapped in a newer credential than the one that failed, or
-        the re-pull produced a new one. Otherwise the 401 must surface
-        instead of replaying the same request.
+    def _reauth(self, secret_used: str) -> bool:
+        """Find a working credential after a 401.
+
+        In order: another thread already swapped one in; the cookie host
+        (re-pulled once per client); whatever the sources hold now (a
+        `login` run elsewhere rewrites the session file); and, with
+        MATTERMOST_AUTO_LOGIN, a browser sign-in shared by all server
+        processes through a lock. Returns True when the caller should retry.
         """
         with self._auth_lock:
-            if self._auth.secret != secret_used:
+            current = self._auth
+            if current.secret != secret_used:
                 return True
-            if self._reauth_tried or not remote_enabled():
+            fresh = None
+            if remote_enabled() and not self._reauth_tried:
+                self._reauth_tried = True
+                if refresh_remote():
+                    fresh = self._newer_auth(current)
+            if fresh is None and current.source == "session":
+                # Only the session file changes under a running process.
+                fresh = self._newer_auth(current)
+            if (
+                fresh is None
+                and current.source == "session"
+                and _auto_login_enabled()
+                and not self._auto_login_failed
+            ):
+                with session.login_lock():
+                    fresh = self._newer_auth(current)  # someone signed in while we waited
+                    if fresh is None:
+                        try:
+                            browser_login.login(current.url, timeout=_login_timeout())
+                        except session.SessionError:
+                            self._auto_login_failed = True
+                        else:
+                            fresh = self._newer_auth(current)
+            if fresh is None:
                 return False
-            self._reauth_tried = True
-            if not refresh_remote():
-                return False
-            auth = get_auth()
-            if not auth.secret or auth.secret == self._auth.secret:
-                return False
-            self._base = auth.url + "/api/v4"
-            self._session = (auth, _auth_headers(auth))
+            self._base = fresh.url + "/api/v4"
+            self._session = (fresh, _auth_headers(fresh))
         self.invalidate_cache()
         return True
 

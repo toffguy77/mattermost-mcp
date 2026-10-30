@@ -200,20 +200,25 @@ class PipeBrowser:
 
 
 def pick_session_cookies(cookies: list[dict], host: str) -> dict[str, str]:
-    """The session cookies set for exactly `host`.
+    """The session cookies for `host`, all from one cookie jar.
 
-    Mattermost scopes its cookies to the site host — ".host" when cookies for
-    subdomains are enabled — and never to a parent domain. A parent-domain
-    MMAUTHTOKEN can only come from a sibling site, so it is ignored rather
-    than risk signing in as whoever planted it.
+    Mattermost scopes its cookies to the site host: host-only normally, or
+    ".host" when cookies for subdomains are enabled — never a parent domain.
+    The host-only jar wins; the ".host" jar (which a subdomain of the host
+    could also write to) is used only when there is no host-only token.
+    Names from different jars are never mixed.
     """
     host = host.lower()
-    out: dict[str, str] = {}
+    jars: dict[str, dict[str, str]] = {host: {}, "." + host: {}}
     for c in cookies:
         name, value = c.get("name"), c.get("value")
-        if name in _COOKIES and value and (c.get("domain") or "").lower().lstrip(".") == host:
-            out.setdefault(name, value)
-    return out if "MMAUTHTOKEN" in out else {}
+        domain = (c.get("domain") or "").lower()
+        if name in _COOKIES and value and domain in jars:
+            jars[domain].setdefault(name, value)
+    for domain in (host, "." + host):
+        if "MMAUTHTOKEN" in jars[domain]:
+            return jars[domain]
+    return {}
 
 
 def wait_for_session(

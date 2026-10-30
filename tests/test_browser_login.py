@@ -264,3 +264,13 @@ def test_pipe_connection_frames_messages():
     threading.Thread(target=fake_chrome, daemon=True).start()
     conn = bl.PipeBrowser(write_fd=to_browser_w, read_fd=from_browser_r)
     assert conn.get_cookies() == [_c("MMAUTHTOKEN", "t")]
+
+
+def test_host_only_jar_beats_dot_host_jar_and_is_not_mixed():
+    cookies = [
+        _c("MMAUTHTOKEN", "planted", ".mm.example.com"),
+        _c("MMUSERID", "attacker", ".mm.example.com"),
+        _c("MMAUTHTOKEN", "mine", "mm.example.com"),
+        _c("MMCSRF", "mine-csrf", "mm.example.com"),
+    ]
+    assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "mine", "MMCSRF": "mine-csrf"}
