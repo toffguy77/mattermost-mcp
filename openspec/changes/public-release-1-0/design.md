@@ -65,7 +65,7 @@ Resolution:
 The keychain is consulted only when env and the cookie host give nothing. That keeps today's cost of zero keychain calls for env-only setups. The cookie-host whitelist adds `MATTERMOST_ACCESS_TOKEN`. `MATTERMOST_AUTH_MODE` and `MATTERMOST_ENABLE_WRITE` are deliberately *not* accepted from the cookie host: they are operator policy, not credentials.
 
 ### D5. Headers per mode
-- Token mode: `Authorization: Bearer`, plus `X-Requested-With: XMLHttpRequest` (harmless, and it matches what the web client sends).
+- Token mode: `Authorization: Bearer <token>` only.
 - Cookie mode: unchanged (`Cookie` and `X-CSRF-Token`).
 
 `_apply_auth` clears the other mode's headers so that a mode switch after a cookie-host re-pull cannot leave both sets on the client.

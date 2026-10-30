@@ -33,7 +33,7 @@ Every behaviour task is red → green → refactor: first write the failing test
 ## 4. Metadata snapshot, unread fix, performance (spec: read-tools)
 
 - [ ] 4.1 `tests/test_channel_index.py`: the snapshot builds from mocked teams, channels, members and categories. A second call within the TTL issues no HTTP requests. `MATTERMOST_CACHE_TTL=0` refetches. Implement D2, including the lock and the thread-pool fan-out. Verify the tests pass.
-- [ ] 4.2 `tests/test_client.py`: add channel totals to the `get_unread` fixtures and add new tests for "all viewed → absent" and "42 total / 40 viewed → msg_count 2". `get_unread` makes no `/channels/{id}` requests (assert the route was not called). Implement D3 on top of the snapshot. Verify: the old `get_unread` assertions hold where they were correct, and the new ones pass.
+- [ ] 4.2 `tests/test_client.py`: add channel totals to the `get_unread` fixtures and add new tests for "all viewed → absent" and "42 total / 40 viewed → msg_count 2". `get_unread` makes no `/channels/{id}` requests (assert the route was not called). The old `get_unread` count semantics are a bug per design D3: fixtures get `total_msg_count_root` added, and any assertion that encoded the old (viewed-as-unread) count is updated to the true unread count. Implement D3 on top of the snapshot. Verify: the new and updated tests pass.
 - [ ] 4.3 `tests/test_client.py`: `list_channels` returns `unread_count` from the snapshot, and the existing `list_channels` tests stay green. Implement it and verify.
 - [ ] 4.4 Note the unread fix in `CHANGELOG.md` under Fixed. Verify the entry exists.
 

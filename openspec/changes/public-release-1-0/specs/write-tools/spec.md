@@ -9,6 +9,8 @@ Lets an agent post, reply, send direct messages, edit its own posts and react, b
 ### Requirement: Write mode is opt-in
 Write mode SHALL be off unless `MATTERMOST_ENABLE_WRITE` is `1`, `true`, `yes` or `on` (case-insensitive). When it is off, the write tools SHALL NOT appear in the tool list. The HTTP layer SHALL also refuse every request that is neither a GET nor one of the read-only POSTs (`/users/ids`, `/users/search`, `/teams/{id}/posts/search`, `/channels/direct`), and SHALL do so before anything is sent.
 
+The one server-side effect allowed in read-only mode SHALL be the one that existed before: `get_direct_messages` may create the DM channel with the target user via `/channels/direct` if it does not exist yet. No posts, edits or reactions SHALL ever be created. The README safety section SHALL state this exception.
+
 #### Scenario: Default tool list
 - **WHEN** the server starts without `MATTERMOST_ENABLE_WRITE`
 - **THEN** `tools/list` contains no `create_post`, `send_direct_message`, `update_post`, `add_reaction` or `remove_reaction`
