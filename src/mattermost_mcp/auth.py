@@ -380,11 +380,10 @@ def get_auth() -> MattermostAuth:
     saved: dict[str, str] | None = None
 
     def _from_session(key: str) -> str:
-        """The `login` session, only as a whole and only for its own server.
+        """The `login` session, for mode detection only.
 
-        Never mixed with a credential from a higher source (an env cookie
-        with the session's CSRF would be a broken identity), and never sent
-        to a different MATTERMOST_URL.
+        It is usable only when no higher source holds a credential and,
+        if a higher source names a server, only for that same server.
         """
         nonlocal saved
         if saved is None:
@@ -393,8 +392,8 @@ def get_auth() -> MattermostAuth:
             if not any(_env(k) or _from_remote(k) for k in higher):
                 candidate = session.load()
                 configured = (_env("MATTERMOST_URL") or _from_remote("MATTERMOST_URL")).rstrip("/")
-                if candidate.get("MATTERMOST_TOKEN") and (
-                    not configured or configured == candidate.get("MATTERMOST_URL", "")
+                if candidate.get("MATTERMOST_TOKEN") and candidate.get("MATTERMOST_URL") and (
+                    not configured or configured == candidate["MATTERMOST_URL"]
                 ):
                     saved = candidate
         return saved.get(key, "")
@@ -409,10 +408,6 @@ def get_auth() -> MattermostAuth:
         value = _from_remote(env_key)
         if value:
             sources[env_key] = "cookie-host"
-            return value
-        value = _from_session(env_key)
-        if value:
-            sources[env_key] = "session"
             return value
         try:
             value = _keychain(account, required=required)
@@ -430,6 +425,17 @@ def get_auth() -> MattermostAuth:
 
     try:
         mode = explicit or _detect_mode(_from_remote, _from_session)
+        if mode == "cookie" and _from_session("MATTERMOST_TOKEN"):
+            # All or nothing: the session's own server with the session's own
+            # cookies. Mixing in fields from other sources could pair a
+            # credential with the wrong server.
+            return MattermostAuth(
+                url=saved["MATTERMOST_URL"],
+                token=saved["MATTERMOST_TOKEN"],
+                csrf=saved.get("MATTERMOST_CSRF", ""),
+                user_id=saved.get("MATTERMOST_USER_ID", ""),
+                source="session",
+            )
         url = _pick("MATTERMOST_URL", "url").rstrip("/")
         if mode == "token":
             access_token = _pick("MATTERMOST_ACCESS_TOKEN", "access_token")

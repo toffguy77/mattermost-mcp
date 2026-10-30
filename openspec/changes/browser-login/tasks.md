@@ -20,9 +20,9 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 3. Browser sign-in (spec: session-login)
 
-- [ ] 3.1 `tests/test_browser_login.py`: browser discovery (`MATTERMOST_BROWSER`, PATH candidates, none found → error text). Implement and verify.
-- [ ] 3.2 `tests/test_browser_login.py`: the DevToolsActivePort read waits for the file, and websocket URL discovery uses mocked `/json/version`. Implement and verify.
-- [ ] 3.3 `tests/test_browser_login.py`: the login loop with a fake cookie source.
+- [x] 3.1 `tests/test_browser_login.py`: browser discovery (`MATTERMOST_BROWSER`, PATH candidates, none found → error text). Implement and verify.
+- [x] 3.2 `tests/test_browser_login.py`: the DevToolsActivePort read waits for the file, and websocket URL discovery uses mocked `/json/version`. Implement and verify.
+- [x] 3.3 `tests/test_browser_login.py`: the login loop with a fake cookie source.
   - Cookies appear after N polls → verified → session saved, browser closed.
   - Cookies for another host are ignored.
   - Timeout → error; browser closed early → error.

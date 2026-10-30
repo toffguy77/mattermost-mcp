@@ -71,3 +71,43 @@ def test_cookie_host_wins_over_session(monkeypatch, tmp_path, no_keychain):
 def test_source_of_credentials_is_reported(no_keychain):
     session.save("https://mm.example.com", token="sess")
     assert auth.get_auth().source == "session"
+
+
+def test_keychain_token_never_paired_with_session_url():
+    # Keychain has a PAT but no URL; the session's URL must not be borrowed for it.
+    def fake(account, required=True):
+        if account == "access_token":
+            return "kc-pat"
+        if required:
+            raise RuntimeError(f"Keychain secret not found: account={account}")
+        return ""
+
+    session.save("https://mm.example.com", token="sess")
+    with patch("mattermost_mcp.auth._keychain", fake):
+        a = auth.get_auth()
+    # The session is the higher source, so it wins as a whole: cookie mode, its own server.
+    assert (a.mode, a.url, a.token, a.access_token) == ("cookie", "https://mm.example.com", "sess", "")
+
+
+def test_explicit_token_mode_never_uses_session(monkeypatch):
+    monkeypatch.setenv("MATTERMOST_AUTH_MODE", "token")
+    session.save("https://mm.example.com", token="sess")
+
+    def fake(account, required=True):  # a PAT in the keychain, but no URL
+        if account == "access_token":
+            return "kc-pat"
+        raise RuntimeError(f"Keychain secret not found: account={account}")
+
+    with patch("mattermost_mcp.auth._keychain", fake), pytest.raises(RuntimeError, match="url"):
+        auth.get_auth()
+
+
+def test_session_fields_are_not_mixed_with_keychain():
+    session.save("https://mm.example.com", token="sess")  # no CSRF saved
+
+    def fake(account, required=True):
+        return {"csrf": "kc-csrf", "user_id": "kc-user"}.get(account, "")
+
+    with patch("mattermost_mcp.auth._keychain", fake):
+        a = auth.get_auth()
+    assert (a.token, a.csrf, a.user_id) == ("sess", "", "")
