@@ -32,8 +32,8 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 4. Password and Firefox (spec: session-login)
 
-- [ ] 4.1 `tests/test_password_login.py`: success (Token header, MMCSRF cookie, user ID saved); MFA retry; wrong password saves nothing; the password never appears in errors. Implement and verify.
-- [ ] 4.2 `tests/test_firefox_import.py`: a temp profile with `profiles.ini` and `cookies.sqlite` → cookies for the host imported; another host ignored; no session → error. Implement and verify.
+- [x] 4.1 `tests/test_password_login.py`: success (Token header, MMCSRF cookie, user ID saved); MFA retry; wrong password saves nothing; the password never appears in errors. Implement and verify.
+- [x] 4.2 `tests/test_firefox_import.py`: a temp profile with `profiles.ini` and `cookies.sqlite` → cookies for the host imported; another host ignored; no session → error. Implement and verify.
 
 ## 5. CLI (spec: distribution, session-login)
 
