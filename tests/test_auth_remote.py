@@ -249,3 +249,20 @@ def test_cache_file_is_private(monkeypatch, tmp_path):
     _local_host(monkeypatch, tmp_path, "MATTERMOST_URL=https://mm\nMATTERMOST_TOKEN=t1\n")
     auth.remote_creds()
     assert (auth._cache_path().stat().st_mode & 0o777) == 0o600
+
+
+def test_missing_keychain_tool_is_not_fatal_for_optional_fields(monkeypatch):
+    monkeypatch.setenv("MATTERMOST_URL", "https://env")
+    monkeypatch.setenv("MATTERMOST_TOKEN", "tok")
+    monkeypatch.delenv("MATTERMOST_CSRF", raising=False)
+    monkeypatch.delenv("MATTERMOST_USER_ID", raising=False)
+    with patch.object(auth.subprocess, "run", side_effect=FileNotFoundError(2, "nope", "pass")):
+        got = auth.get_auth()
+    assert (got.token, got.csrf, got.user_id) == ("tok", "", "")
+
+
+def test_missing_keychain_tool_for_required_field_is_explained(monkeypatch):
+    monkeypatch.delenv("MATTERMOST_URL", raising=False)
+    with patch.object(auth.subprocess, "run", side_effect=FileNotFoundError(2, "nope", "pass")):
+        with pytest.raises(RuntimeError, match="no keychain tool"):
+            auth.get_auth()

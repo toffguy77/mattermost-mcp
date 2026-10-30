@@ -115,9 +115,19 @@ def _keychain_get_pass(account: str, required: bool = True) -> str:
 
 
 def _keychain(account: str, required: bool = True) -> str:
-    if sys.platform == "darwin":
-        return _keychain_get_macos(account, required=required)
-    return _keychain_get_pass(account, required=required)
+    try:
+        if sys.platform == "darwin":
+            return _keychain_get_macos(account, required=required)
+        return _keychain_get_pass(account, required=required)
+    except FileNotFoundError as e:
+        # No `security`/`pass` binary is just "no keychain": env-only setups
+        # must not die on the optional fields.
+        if not required:
+            return ""
+        raise RuntimeError(
+            f"Mattermost credential {account!r} not set: no MATTERMOST_* env "
+            f"value and no keychain tool ({e.filename}) to read it from."
+        ) from e
 
 
 # ---------------------------------------------------------------------------
