@@ -1,7 +1,7 @@
 [project]
 name = "mattermost-mcp-server"
-version = "1.0.0"
-description = "MCP server for Mattermost: read channels, threads, unreads and mentions, and (opt-in) post, reply, edit and react. Personal access token or browser-cookie auth."
+version = "1.1.0"
+description = "MCP server for Mattermost: read channels, threads, unreads and mentions, and (opt-in) post, reply, edit and react. Personal access token or browser sign-in."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "fastmcp>=4.1,<5",
     "httpx[socks]>=0.27",
+    "websockets>=13",
 ]
 
 [project.scripts]

@@ -632,11 +632,12 @@ wheels = [
 
 [[package]]
 name = "mattermost-mcp-server"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx", extra = ["socks"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -651,6 +652,7 @@ dev = [
 requires-dist = [
     { name = "fastmcp", specifier = ">=4.1,<5" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
+    { name = "websockets", specifier = ">=13" },
 ]
 
 [package.metadata.requires-dev]

@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-10-30
+
+### Added
+
+- `mattermost-mcp-server login`: sign in through a browser window (any
+  installed Chrome, Chromium, Edge or Brave) and save the session cookies,
+  so servers without personal access tokens need no DevTools copying. Also
+  `login --password` (with MFA) and `login --from-firefox`.
+- `status` and `logout` subcommands. Without a subcommand the command still
+  serves MCP on stdio.
+- The saved session is a credential source: after `login` the server needs
+  no credentials in its configuration.
+- Expired sessions are refreshed without a restart: running servers pick up
+  a new `login`, and with `MATTERMOST_AUTO_LOGIN=1` they open the sign-in
+  window themselves, one window shared by all server processes.
+
 ## [1.0.0] - 2026-10-30
 
 First public release.
@@ -56,4 +72,5 @@ First public release.
 
 Private read-only release with browser-cookie auth.
 
+[1.1.0]: https://github.com/toffguy77/mattermost-mcp/releases/tag/v1.1.0
 [1.0.0]: https://github.com/toffguy77/mattermost-mcp/releases/tag/v1.0.0

@@ -58,5 +58,5 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 7. Docs and release
 
-- [ ] 7.1 README: a "Sign in with your browser" section (`login`, `status`, `logout`, auto login, password, Firefox); add `MATTERMOST_SESSION_FILE`, `MATTERMOST_BROWSER`, `MATTERMOST_BROWSER_PROFILE` and `MATTERMOST_AUTO_LOGIN` to the configuration table; update the 401 troubleshooting. Add notes on the profile and CDP port to SECURITY.md. Add a 1.1.0 entry to CHANGELOG. Bump the version in pyproject and server.json. Verify: `tests/test_packaging.py` passes.
-- [ ] 7.2 Integration check: full suite, ruff, `openspec validate browser-login --strict`, and a wheel smoke test (`--help`, and stdio `tools/list` unchanged). Verify that everything is green.
+- [x] 7.1 README: a "Sign in with your browser" section (`login`, `status`, `logout`, auto login, password, Firefox); add `MATTERMOST_SESSION_FILE`, `MATTERMOST_BROWSER`, `MATTERMOST_BROWSER_PROFILE` and `MATTERMOST_AUTO_LOGIN` to the configuration table; update the 401 troubleshooting. Add notes on the profile and CDP port to SECURITY.md. Add a 1.1.0 entry to CHANGELOG. Bump the version in pyproject and server.json. Verify: `tests/test_packaging.py` passes.
+- [x] 7.2 Integration check: full suite, ruff, `openspec validate browser-login --strict`, and a wheel smoke test (`--help`, and stdio `tools/list` unchanged). Verify that everything is green.

@@ -17,9 +17,10 @@ post, reply, send DMs, edit its own messages and react.
   channels are skipped, collapsed-thread counts are used) and sidebar
   categories work as filters. Mentions from muted channels are still shown.
 - **Works where personal access tokens don't.** Use a personal access token
-  (PAT) or bot token if you can. If an admin has disabled PATs, or a proxy
-  strips the `Authorization` header, use your browser session cookies
-  instead.
+  (PAT) or bot token if you can. If an admin has disabled PATs (common with
+  SSO), run `mattermost-mcp-server login`: sign in once in a browser window
+  and the server picks up the session cookies itself, and picks them up again
+  when they expire.
 - **Fast.** Channel metadata is fetched once, across teams in parallel, and
   cached briefly. No per-channel requests.
 
@@ -28,7 +29,8 @@ post, reply, send DMs, edit its own messages and react.
 1. Create a personal access token in Mattermost: **Profile → Security →
    Personal Access Tokens → Create Token**. If that section is missing, an
    admin must enable **System Console → Integrations → Integration Management
-   → Enable Personal Access Tokens** (or see [Cookie auth](#cookie-auth)).
+   → Enable Personal Access Tokens**, or skip the token and
+   [sign in with your browser](#sign-in-with-your-browser) instead.
 2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
 3. Add the server to your client.
 
@@ -144,6 +146,12 @@ so consider a dedicated bot account for agents that post on their own.
 | `MATTERMOST_TOKEN` | — | Cookie auth: value of the `MMAUTHTOKEN` cookie |
 | `MATTERMOST_CSRF` | — | Cookie auth: value of the `MMCSRF` cookie; required for write tools |
 | `MATTERMOST_USER_ID` | — | Cookie auth: value of the `MMUSERID` cookie (optional) |
+| `MATTERMOST_AUTO_LOGIN` | off | `1` opens the browser sign-in automatically when the saved session expires |
+| `MATTERMOST_LOGIN_TIMEOUT` | `300` | Seconds to wait for an automatic sign-in |
+| `MATTERMOST_BROWSER` | auto | Path of the Chromium-family browser used by `login` |
+| `MATTERMOST_BROWSER_ARGS` | — | Extra browser flags for `login`, e.g. `--proxy-server=…` |
+| `MATTERMOST_BROWSER_PROFILE` | `~/.config/mattermost-mcp/browser-profile` | Sign-in browser profile (mode 0700) |
+| `MATTERMOST_SESSION_FILE` | `~/.config/mattermost-mcp/session.env` | Where `login` saves the session (mode 0600) |
 | `MATTERMOST_CACHE_TTL` | `60` | Seconds to cache channel metadata; `0` disables the cache |
 | `MATTERMOST_TRUST_ENV` | `1` | `0` ignores `HTTP(S)_PROXY`/`ALL_PROXY` and connects to Mattermost directly |
 | `MATTERMOST_AUTH_HELP` | — | Extra text appended to the 401 error, e.g. how credentials are rotated in your setup |
@@ -156,19 +164,60 @@ so consider a dedicated bot account for agents that post on their own.
 
 **Choosing the auth mode.** If `MATTERMOST_AUTH_MODE` is unset, the first
 credential source that has any credential decides. The sources are checked
-in order: env, then cookie host, then keychain. `MATTERMOST_ACCESS_TOKEN` in
+in order: env, then cookie host, then the saved `login` session, then
+keychain. `MATTERMOST_ACCESS_TOKEN` in
 that source means token mode. `MATTERMOST_TOKEN` alone means cookie mode. A
 lower-priority source never overrides a higher one.
 
+## Sign in with your browser
+
+No personal access tokens on your server? Sign in once the way you always do
+(password, SSO, MFA), and the server uses your session:
+
+```sh
+uvx mattermost-mcp-server login --url https://mattermost.example.com
+```
+
+A browser window opens at your server's login page and closes by itself as
+soon as you are signed in. Any installed Chrome, Chromium, Edge or Brave
+works; set `MATTERMOST_BROWSER` to use a specific one. The session cookies
+are checked against the server and saved to
+`~/.config/mattermost-mcp/session.env` (mode 0600). From then on the server
+needs no credentials in its configuration at all:
+
+```sh
+claude mcp add mattermost -- uvx mattermost-mcp-server
+```
+
+Other ways to sign in:
+
+```sh
+mattermost-mcp-server login --password       # username/email + password (+ MFA code); the password is not stored
+mattermost-mcp-server login --from-firefox   # reuse the session of a Firefox where you are signed in
+mattermost-mcp-server status                 # which server, user and credential source is in use
+mattermost-mcp-server logout                 # revoke and delete the saved session (--forget-browser: also the browser profile)
+```
+
+**When the session expires.** Sessions expire after the time your admin
+configured. Run `login` again; running servers pick the new session up on
+their next call, without a restart. With `MATTERMOST_AUTO_LOGIN=1` in the
+server's `env`, the server opens the sign-in window itself when it gets a
+401. The browser profile remembers your identity provider, so with SSO this
+often completes without typing anything. Several running servers share one
+window.
+
+The sign-in browser uses its own profile in
+`~/.config/mattermost-mcp/browser-profile`, separate from your everyday
+browser. On macOS and Linux the server talks to it over a private pipe, not
+a network port.
+
 ## Cookie auth
 
-Use this when personal access tokens are disabled on your server, or when a
+To use session cookies directly, without `login`: log in to Mattermost in a
+browser, open DevTools → Application → Cookies, and copy `MMAUTHTOKEN`,
+`MMCSRF` and (optionally) `MMUSERID` into `MATTERMOST_TOKEN`,
+`MATTERMOST_CSRF` and `MATTERMOST_USER_ID`. This is also the way to go when a
 reverse proxy strips the `Authorization` header.
-
-1. Log in to Mattermost in a browser and open DevTools → Application →
-   Cookies.
-2. Copy `MMAUTHTOKEN`, `MMCSRF` and (optionally) `MMUSERID` into
-   `MATTERMOST_TOKEN`, `MATTERMOST_CSRF` and `MATTERMOST_USER_ID`.
 
 Session cookies expire. When they do, tool calls fail with a 401 error. Put
 fresh cookies wherever the server reads them from, then restart it, because
@@ -190,7 +239,10 @@ wins:
    only supply `MATTERMOST_URL`, `MATTERMOST_ACCESS_TOKEN`,
    `MATTERMOST_TOKEN`, `MATTERMOST_CSRF` and `MATTERMOST_USER_ID`. Nothing
    else is read from it, not even the auth or write mode.
-3. **OS keychain**: accounts `url`, `access_token`, `token`, `csrf` and
+3. **Saved session** from `mattermost-mcp-server login`. It is used only as
+   a whole (URL, cookies and CSRF together), only in cookie mode, and only
+   when it belongs to the same server as any `MATTERMOST_URL` you set.
+4. **OS keychain**: accounts `url`, `access_token`, `token`, `csrf` and
    `user_id` under the service `MATTERMOST_KEYCHAIN_SERVICE`.
 
    ```sh
@@ -208,7 +260,12 @@ wins:
   or mistyped. Create a new one, or check whether your account is still
   allowed to use personal access tokens.
 - **`Mattermost rejected the session cookies (401)`**: the browser session
-  expired. Copy fresh cookies and restart the server.
+  expired. Run `mattermost-mcp-server login` again (or set
+  `MATTERMOST_AUTO_LOGIN=1`). If you set the cookies by hand, copy fresh ones
+  and restart the server.
+- **`No Chromium-family browser found`**: install Chrome, Chromium, Edge or
+  Brave, point `MATTERMOST_BROWSER` at one, or use `login --password` or
+  `login --from-firefox`.
 - **`Write tools in cookie mode need the MMCSRF cookie`**: set
   `MATTERMOST_CSRF`. Mattermost requires it for any change made with cookie
   auth.

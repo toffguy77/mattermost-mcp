@@ -92,5 +92,5 @@ async def test_create_server_with_write():
 def test_server_reports_package_version():
     from mattermost_mcp import __version__
 
-    assert __version__ == "1.0.0"
+    assert __version__ == "1.1.0"
     assert create_server().version == __version__
