@@ -50,5 +50,5 @@ No **BREAKING** changes. The original eight tools keep their names, parameters a
 - Tests: new tests for every behaviour above. Existing tests keep their assertions; calls become `await` where the client turns async.
 - Packaging: `pyproject.toml` (name, version, scripts, ruff), new `server.json`, `.github/workflows/`.
 - Docs: `README.md`, plus the new `CHANGELOG.md`, `CONTRIBUTING.md` and `SECURITY.md`.
-- Hermes (`garrymore/deploy/hermes/config.yaml`) runs the server over stdio with cookie env vars and needs no change. It does not import the Python API.
+- Hermes (the private deployment) runs the server over stdio with cookie env vars and needs no change. It does not import the Python API.
 - Mattermost endpoints used for the first time: `PUT /posts/{id}/patch`, `POST /posts`, `POST /reactions`, `DELETE /users/{uid}/posts/{pid}/reactions/{emoji}`, `GET /channels/{id}/pinned`, `GET /files/{id}/info`, `POST /users/search`, `GET /teams/{tid}/channels/name/{name}`, `GET /posts/{id}`.
