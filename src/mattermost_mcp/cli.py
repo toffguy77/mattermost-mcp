@@ -53,6 +53,8 @@ def _login(args) -> None:
             user = browser_login.login(url, timeout=args.timeout)
     except SessionError as e:
         _fail(str(e))
+    except (OSError, RuntimeError) as e:
+        _fail(f"sign-in failed: {e}")
     print(f"Signed in as @{user.get('username', '?')} on {url}. Session saved to {session.session_path()}.")
 
 

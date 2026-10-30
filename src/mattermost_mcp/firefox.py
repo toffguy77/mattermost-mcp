@@ -57,18 +57,24 @@ def _read_cookies(profile: Path) -> list[dict]:
         raise SessionError(f"No cookies.sqlite in Firefox profile {profile}.")
     with tempfile.TemporaryDirectory() as tmp:
         dst = Path(tmp) / "cookies.sqlite"
-        shutil.copy2(src, dst)
-        wal = profile / "cookies.sqlite-wal"
-        if wal.exists():
-            shutil.copy2(wal, Path(tmp) / "cookies.sqlite-wal")
-        db = sqlite3.connect(dst)
         try:
-            rows = db.execute(
-                "SELECT name, value, host FROM moz_cookies "
-                "WHERE name IN ('MMAUTHTOKEN', 'MMCSRF', 'MMUSERID')"
-            ).fetchall()
-        finally:
-            db.close()
+            # WAL first: copying it after the main file could pair a newer
+            # log with an older database.
+            wal = profile / "cookies.sqlite-wal"
+            if wal.exists():
+                shutil.copy2(wal, Path(tmp) / "cookies.sqlite-wal")
+            shutil.copy2(src, dst)
+            db = sqlite3.connect(dst)
+            try:
+                # Default container, normal windows only: no originAttributes.
+                rows = db.execute(
+                    "SELECT name, value, host FROM moz_cookies "
+                    "WHERE name IN ('MMAUTHTOKEN', 'MMCSRF', 'MMUSERID') AND originAttributes = ''"
+                ).fetchall()
+            finally:
+                db.close()
+        except (OSError, sqlite3.Error) as e:
+            raise SessionError(f"Could not read Firefox cookies in {profile}: {e}") from None
     return [{"name": n, "value": v, "domain": h} for n, v, h in rows]
 
 

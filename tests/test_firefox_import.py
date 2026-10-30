@@ -19,8 +19,10 @@ def _profile(tmp_path, cookies):
         "[Profile0]\nName=default-release\nIsRelative=1\nPath=abcd.default-release\n"
     )
     db = sqlite3.connect(prof / "cookies.sqlite")
-    db.execute("CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, name TEXT, value TEXT, host TEXT, path TEXT)")
-    db.executemany("INSERT INTO moz_cookies (name, value, host, path) VALUES (?, ?, ?, '/')", cookies)
+    db.execute("CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, name TEXT, value TEXT, host TEXT, path TEXT, "
+               "originAttributes TEXT NOT NULL DEFAULT '')")
+    db.executemany("INSERT INTO moz_cookies (name, value, host, path, originAttributes) VALUES (?, ?, ?, '/', ?)",
+                   [c if len(c) == 4 else (*c, "") for c in cookies])
     db.commit()
     db.close()
     return base
@@ -55,3 +57,21 @@ def test_explicit_profile_path(tmp_path, monkeypatch):
     monkeypatch.setattr(firefox.session, "verify", lambda *a: {"id": "u1", "username": "alice"})
     firefox.import_session("https://mm.example.com", profile=base / "abcd.default-release")
     assert session.load()["MATTERMOST_TOKEN"] == "tok"
+
+
+def test_container_and_private_cookies_are_ignored(tmp_path, monkeypatch):
+    base = _profile(tmp_path, [
+        ("MMAUTHTOKEN", "container", "mm.example.com", "^userContextId=2"),
+        ("MMAUTHTOKEN", "main", "mm.example.com"),
+    ])
+    monkeypatch.setattr(firefox.session, "verify", lambda *a: {"id": "u1", "username": "alice"})
+    firefox.import_session("https://mm.example.com", base_dir=base)
+    assert session.load()["MATTERMOST_TOKEN"] == "main"
+
+
+def test_unreadable_cookie_db_is_a_clean_error(tmp_path):
+    prof = tmp_path / "p"
+    prof.mkdir()
+    (prof / "cookies.sqlite").write_text("not a database")
+    with pytest.raises(SessionError, match="Firefox"):
+        firefox.import_session("https://mm.example.com", profile=prof)

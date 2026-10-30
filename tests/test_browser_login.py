@@ -8,7 +8,7 @@ from httpx import Response
 
 from mattermost_mcp import browser_login as bl
 from mattermost_mcp import session
-from mattermost_mcp.session import SessionError
+from mattermost_mcp.session import SessionError, SessionRejected
 
 # ------------------------------------------------------------------
 # discovery
@@ -148,7 +148,7 @@ def test_wait_skips_stale_token_from_old_profile():
     def verify(token, csrf, user_id):
         seen.append(token)
         if token == "stale":
-            raise SessionError("rejected (401)")
+            raise SessionRejected("rejected (401)")
         return {"id": "u1", "username": "alice"}
 
     cookies, user = bl.wait_for_session(browser, "mm.example.com", verify, timeout=60,
@@ -274,3 +274,31 @@ def test_host_only_jar_beats_dot_host_jar_and_is_not_mixed():
         _c("MMCSRF", "mine-csrf", "mm.example.com"),
     ]
     assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "mine", "MMCSRF": "mine-csrf"}
+
+
+def test_transient_verify_error_does_not_burn_the_token():
+    browser = FakeBrowser([[_c("MMAUTHTOKEN", "tok")]])
+    clock = Clock()
+    attempts = []
+
+    def verify(token, csrf, user_id):
+        attempts.append(token)
+        if len(attempts) == 1:
+            raise SessionError("Could not reach https://mm: ConnectError")
+        return {"id": "u1", "username": "alice"}
+
+    cookies, user = bl.wait_for_session(browser, "mm.example.com", verify, timeout=60,
+                                        now=clock.now, sleep=clock.sleep, alive=lambda: True)
+    assert user["username"] == "alice"
+    assert attempts == ["tok", "tok"]
+
+
+def test_login_wraps_unexpected_errors(monkeypatch):
+    monkeypatch.setattr(bl, "find_browser", lambda: "/usr/bin/chromium")
+
+    def launch(*a):
+        raise OSError("exec format error")
+
+    monkeypatch.setattr(bl, "_launch", launch)
+    with pytest.raises(SessionError, match="exec format error"):
+        bl.login("https://mm.example.com")

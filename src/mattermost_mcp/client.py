@@ -190,13 +190,18 @@ def _initial_auth():
         return get_auth()
     except RuntimeError:
         url = os.environ.get("MATTERMOST_URL", "").strip() or session.load().get("MATTERMOST_URL", "")
-        if not (_auto_login_enabled() and url):
+        # A browser sign-in only produces cookies; it cannot fix token mode.
+        mode = os.environ.get("MATTERMOST_AUTH_MODE", "").strip().lower()
+        if not (_auto_login_enabled() and url and mode in ("", "cookie")):
             raise
     with session.login_lock():
         try:
             return get_auth()  # another server process may have just signed in
         except RuntimeError:
-            browser_login.login(url, timeout=_login_timeout())
+            try:
+                browser_login.login(url, timeout=_login_timeout())
+            except session.SessionError as e:
+                raise RuntimeError(f"Automatic sign-in failed: {e}") from None
     return get_auth()
 
 
@@ -210,7 +215,6 @@ class MattermostClient:
     def __init__(self, write_enabled: bool | None = None) -> None:
         self.write_enabled = write_enabled_from_env() if write_enabled is None else write_enabled
         auth = _initial_auth()
-        self._base = auth.url + "/api/v4"
 
         self._http = httpx.Client(
             timeout=30.0,
@@ -243,6 +247,10 @@ class MattermostClient:
         try:
             auth = get_auth()
         except RuntimeError:
+            return None
+        # Same server only: a `login --url elsewhere` must not move a running
+        # server to another workspace. (A cookie host may switch the mode.)
+        if auth.url != current.url:
             return None
         return auth if auth.secret and auth.secret != current.secret else None
 
@@ -278,14 +286,16 @@ class MattermostClient:
                     if fresh is None:
                         try:
                             browser_login.login(current.url, timeout=_login_timeout())
-                        except session.SessionError:
+                        except Exception:
+                            # Any failure (timeout, closed window, no browser)
+                            # ends auto sign-in for this process.
                             self._auto_login_failed = True
                         else:
                             fresh = self._newer_auth(current)
             if fresh is None:
                 return False
-            self._base = fresh.url + "/api/v4"
             self._session = (fresh, _auth_headers(fresh))
+            self._me = None  # the new session may belong to another account
         self.invalidate_cache()
         return True
 
@@ -309,8 +319,10 @@ class MattermostClient:
 
     def _request(self, method: str, path: str, *, params=None, json=None, _retry: bool = True):
         self._check_write(method, path)
+        # URL and headers come from the same tuple: a credential is never
+        # sent to a server other than its own, even mid-swap.
         auth, headers = self._session
-        url = f"{self._base}{path}"
+        url = f"{auth.url}/api/v4{path}"
         try:
             r = self._http.request(method, url, params=params, json=json, headers=headers)
         except httpx.TimeoutException:

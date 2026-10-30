@@ -10,6 +10,8 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 import httpx
@@ -19,6 +21,10 @@ _KEYS = ("MATTERMOST_URL", "MATTERMOST_TOKEN", "MATTERMOST_CSRF", "MATTERMOST_US
 
 class SessionError(RuntimeError):
     """Signing in or verifying a session failed. Never carries secrets."""
+
+
+class SessionRejected(SessionError):
+    """The server answered 401: this session is not (or no longer) valid."""
 
 
 def _config_dir() -> Path:
@@ -43,9 +49,10 @@ def profile_dir() -> Path:
 def write_private(path: Path, text: str) -> None:
     """Write a secret file atomically, 0600 from the first byte."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.unlink(missing_ok=True)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    # A unique name per writer (mkstemp: O_EXCL, 0600), so two concurrent
+    # sign-ins cannot trip over each other's temporary file.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
@@ -103,7 +110,7 @@ def verify(url: str, token: str, csrf: str = "", user_id: str = "") -> dict:
     except httpx.HTTPError as e:
         raise SessionError(f"Could not reach {url}: {type(e).__name__}") from None
     if r.status_code == 401:
-        raise SessionError(f"{url} rejected the session (401).")
+        raise SessionRejected(f"{url} rejected the session (401).")
     if r.status_code != 200:
         raise SessionError(f"{url} answered {r.status_code} to /api/v4/users/me.")
     return r.json()
@@ -119,7 +126,14 @@ def login_lock():
             import msvcrt
 
             f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            # LK_LOCK gives up after ~10 s; another process may be in a
+            # five-minute sign-in, so wait for as long as it takes.
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.5)
             try:
                 yield
             finally:

@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 import httpx
 
 from . import session
-from .session import SessionError
+from .session import SessionError, SessionRejected
 
 _COOKIES = ("MMAUTHTOKEN", "MMCSRF", "MMUSERID")
 
@@ -121,7 +121,8 @@ class CdpBrowser:
         from websockets.sync.client import connect
 
         self._stack = contextlib.ExitStack()
-        self._ws = self._stack.enter_context(connect(ws_url, max_size=None, open_timeout=10))
+        # proxy=None: a loopback DevTools socket must never go through HTTP(S)_PROXY.
+        self._ws = self._stack.enter_context(connect(ws_url, max_size=None, open_timeout=10, proxy=None))
         self._ids = itertools.count(1)
 
     def _call(self, method: str, params: dict | None = None) -> dict:
@@ -252,11 +253,13 @@ def wait_for_session(
             cookies = {}
         token = cookies.get("MMAUTHTOKEN", "")
         if token and token not in tried:
-            tried.add(token)
             try:
                 user = verify(token, cookies.get("MMCSRF", ""), cookies.get("MMUSERID", ""))
-            except SessionError:
+            except SessionRejected:
+                tried.add(token)  # expired leftover from an earlier sign-in
                 user = None
+            except SessionError:
+                user = None  # network hiccup: try the same token again
             # A user-id cookie that names someone else means mixed-up cookies.
             if user is not None and cookies.get("MMUSERID", user.get("id")) == user.get("id"):
                 return cookies, user
@@ -312,6 +315,10 @@ def _launch_pipe(exe: str, profile: Path, url: str):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+    except BaseException:
+        for fd in (cmd_w, out_r):
+            os.close(fd)
+        raise
     finally:
         os.close(cmd_r)
         os.close(out_w)
@@ -341,8 +348,36 @@ def _launch_tcp(exe: str, profile: Path, url: str):
         raise
 
 
+def _stop(proc) -> None:
+    try:
+        proc.wait(timeout=5)
+        return
+    except Exception:
+        pass
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except Exception:
+        # A browser left running would keep the profile locked, and the next
+        # sign-in would hand its URL to this zombie and exit at once.
+        proc.kill()
+        proc.wait()
+
+
 def login(url: str, timeout: float = 300) -> dict:
-    """Run the browser sign-in, save the session, return the user."""
+    """Run the browser sign-in, save the session, return the user.
+
+    Every failure surfaces as SessionError with a readable message.
+    """
+    try:
+        return _login(url, timeout)
+    except SessionError:
+        raise
+    except Exception as e:
+        raise SessionError(f"Browser sign-in failed: {type(e).__name__}: {e}") from e
+
+
+def _login(url: str, timeout: float) -> dict:
     url = url.rstrip("/")
     host = urlparse(url).hostname or ""
     if not host:
@@ -358,9 +393,6 @@ def login(url: str, timeout: float = 300) -> dict:
         )
     finally:
         browser.close()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.terminate()
+        _stop(proc)
     session.save(url, cookies["MMAUTHTOKEN"], cookies.get("MMCSRF", ""), cookies.get("MMUSERID", ""))
     return user

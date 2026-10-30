@@ -134,3 +134,65 @@ def _no_keychain(account, required=True):
     if required:
         raise RuntimeError(f"Keychain secret not found: account={account}")
     return ""
+
+
+@respx.mock
+def test_session_for_another_server_is_not_adopted(monkeypatch):
+    session.save(URL, token="old")
+    client = MattermostClient()
+    client._me = {"id": "u1", "username": "alice"}
+    session.save("https://other.example.com", token="new")  # `login --url other` elsewhere
+    _me_route("never")
+    with pytest.raises(RuntimeError, match="401"):
+        client._get("/users/me")
+    assert client._auth.url == URL
+
+
+@respx.mock
+def test_swap_forgets_cached_user(monkeypatch):
+    session.save(URL, token="old")
+    client = MattermostClient()
+    client._me = {"id": "u1", "username": "alice"}
+    session.save(URL, token="new", user_id="u2")
+    _me_route("new")
+    client._get("/users/me")
+    assert client._me is None or client._me.get("username") == "alice"
+    assert client._auth.token == "new"
+
+
+@respx.mock
+def test_requests_use_the_url_of_their_own_session():
+    session.save(URL, token="tok")
+    client = MattermostClient()
+    assert not hasattr(client, "_base")
+    _me_route("tok")
+    client._get("/users/me")
+
+
+def test_explicit_token_mode_never_auto_logs_in(monkeypatch):
+    monkeypatch.setenv("MATTERMOST_AUTO_LOGIN", "1")
+    monkeypatch.setenv("MATTERMOST_AUTH_MODE", "token")
+    monkeypatch.setenv("MATTERMOST_URL", URL)
+    monkeypatch.setattr("mattermost_mcp.auth._keychain", _no_keychain)
+    monkeypatch.setattr(browser_login, "login", lambda *a, **k: pytest.fail("pointless sign-in"))
+    with pytest.raises(RuntimeError, match="MATTERMOST_ACCESS_TOKEN"):
+        MattermostClient()
+
+
+@respx.mock
+def test_unexpected_login_crash_counts_as_failed_sign_in(monkeypatch):
+    monkeypatch.setenv("MATTERMOST_AUTO_LOGIN", "1")
+    session.save(URL, token="old")
+    client = MattermostClient()
+    calls = []
+
+    def crash(url, timeout):
+        calls.append(1)
+        raise OSError("browser binary vanished")
+
+    monkeypatch.setattr(browser_login, "login", crash)
+    _me_route("never")
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="401"):
+            client._get("/users/me")
+    assert len(calls) == 1
