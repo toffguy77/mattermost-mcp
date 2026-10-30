@@ -200,30 +200,20 @@ class PipeBrowser:
 
 
 def pick_session_cookies(cookies: list[dict], host: str) -> dict[str, str]:
-    """The session cookies for `host`, all taken from one cookie domain.
+    """The session cookies set for exactly `host`.
 
-    Cookies set exactly for the host win. A parent-domain cookie (Mattermost's
-    "cookies for subdomains" setting) is used only when the host has none of
-    its own, so a sibling subdomain cannot toss in a different session.
+    Mattermost scopes its cookies to the site host — ".host" when cookies for
+    subdomains are enabled — and never to a parent domain. A parent-domain
+    MMAUTHTOKEN can only come from a sibling site, so it is ignored rather
+    than risk signing in as whoever planted it.
     """
     host = host.lower()
-    by_domain: dict[str, dict[str, str]] = {}
+    out: dict[str, str] = {}
     for c in cookies:
         name, value = c.get("name"), c.get("value")
-        if name not in _COOKIES or not value:
-            continue
-        domain = (c.get("domain") or "").lower()
-        bare = domain.lstrip(".")
-        if bare == host or host.endswith("." + bare):
-            by_domain.setdefault(domain, {}).setdefault(name, value)
-    exact = by_domain.get(host)
-    if exact and "MMAUTHTOKEN" in exact:
-        return exact
-    # Most specific parent domain that carries a token.
-    for domain in sorted(by_domain, key=lambda d: len(d.lstrip(".")), reverse=True):
-        if "MMAUTHTOKEN" in by_domain[domain]:
-            return by_domain[domain]
-    return {}
+        if name in _COOKIES and value and (c.get("domain") or "").lower().lstrip(".") == host:
+            out.setdefault(name, value)
+    return out if "MMAUTHTOKEN" in out else {}
 
 
 def wait_for_session(

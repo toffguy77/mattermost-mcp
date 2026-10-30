@@ -389,6 +389,12 @@ def register_write_tools(mcp: FastMCP, get_client) -> None:
 mcp = create_server(enable_write=False)
 
 
-def main() -> None:
+def serve() -> None:
     server = create_server(enable_write=write_enabled_from_env())
     server.run(show_banner=False)
+
+
+def main() -> None:
+    from .cli import main as cli_main
+
+    cli_main()

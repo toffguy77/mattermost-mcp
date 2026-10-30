@@ -82,7 +82,7 @@ def _c(name, value, domain="mm.example.com"):
     return {"name": name, "value": value, "domain": domain}
 
 
-def test_pick_matches_host_and_parent_domain():
+def test_pick_takes_host_cookies_only():
     cookies = [
         _c("MMAUTHTOKEN", "evil", "other.example.org"),
         _c("MMAUTHTOKEN", "tok"),
@@ -90,8 +90,6 @@ def test_pick_matches_host_and_parent_domain():
         _c("MMUSERID", "u1"),
         _c("unrelated", "x"),
     ]
-    # The CSRF cookie lives on the parent domain, the token on the host:
-    # cookies are never mixed across domains.
     assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "tok", "MMUSERID": "u1"}
 
 
@@ -219,9 +217,17 @@ def test_exact_host_cookies_beat_parent_domain():
     assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "mine", "MMCSRF": "mine-csrf"}
 
 
-def test_parent_domain_used_only_when_no_exact_host_cookie():
-    cookies = [_c("MMAUTHTOKEN", "shared", ".example.com"), _c("MMCSRF", "c", ".example.com")]
-    assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "shared", "MMCSRF": "c"}
+def test_parent_domain_cookies_are_never_used():
+    # Mattermost scopes its cookies to the site host (".mm.example.com" with
+    # subdomain cookies on), never to a parent domain, so a parent-domain
+    # token can only have been planted by a sibling site.
+    cookies = [_c("MMAUTHTOKEN", "tossed", ".example.com"), _c("MMCSRF", "c", ".example.com")]
+    assert bl.pick_session_cookies(cookies, "mm.example.com") == {}
+
+
+def test_subdomain_cookie_setting_is_accepted():
+    cookies = [_c("MMAUTHTOKEN", "tok", ".mm.example.com"), _c("MMCSRF", "c", ".mm.example.com")]
+    assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "tok", "MMCSRF": "c"}
 
 
 def test_user_id_must_match_verified_user():

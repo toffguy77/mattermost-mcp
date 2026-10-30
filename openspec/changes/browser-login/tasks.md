@@ -37,7 +37,7 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 5. CLI (spec: distribution, session-login)
 
-- [ ] 5.1 `tests/test_cli.py`:
+- [x] 5.1 `tests/test_cli.py`:
   - no args → serve;
   - `--help` lists the subcommands;
   - `login` dispatches to browser, password or Firefox;
