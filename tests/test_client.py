@@ -277,14 +277,47 @@ def test_get_unread_empty():
     respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
         return_value=Response(200, json=[{"id": "team1"}])
     )
+    # msg_count is what the user has *viewed*; unread = channel total - viewed.
+    respx.get("https://mm.example.com/api/v4/users/user1/teams/team1/channels").mock(
+        return_value=Response(200, json=[
+            {"id": "ch1", "name": "general", "display_name": "General", "type": "O", "total_msg_count": 40},
+        ])
+    )
     respx.get("https://mm.example.com/api/v4/users/user1/teams/team1/channels/members").mock(
         return_value=Response(200, json=[
-            {"channel_id": "ch1", "msg_count": 0, "mention_count": 0},
+            {"channel_id": "ch1", "msg_count": 40, "mention_count": 0},
         ])
     )
 
     result = client.get_unread()
     assert result == []
+
+
+@respx.mock
+def test_get_unread_counts_total_minus_viewed():
+    client = _make_client()
+    client._me = {"id": "user1", "username": "testuser"}
+
+    respx.get("https://mm.example.com/api/v4/users/user1/teams").mock(
+        return_value=Response(200, json=[{"id": "team1"}])
+    )
+    respx.get("https://mm.example.com/api/v4/users/user1/teams/team1/channels").mock(
+        return_value=Response(200, json=[
+            {"id": "ch1", "name": "general", "display_name": "General", "type": "O",
+             "total_msg_count": 50, "total_msg_count_root": 42},
+        ])
+    )
+    respx.get("https://mm.example.com/api/v4/users/user1/teams/team1/channels/members").mock(
+        return_value=Response(200, json=[
+            {"channel_id": "ch1", "msg_count": 45, "msg_count_root": 40,
+             "mention_count": 0, "mention_count_root": 0},
+        ])
+    )
+
+    assert client.get_unread() == [{
+        "channel_id": "ch1", "channel_name": "General", "msg_count": 2,
+        "mention_count": 0, "muted": False, "category": None,
+    }]
 
 
 # ------------------------------------------------------------------

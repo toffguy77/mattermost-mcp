@@ -1,9 +1,13 @@
-"""Mattermost REST API v4 client — read-only, synchronous httpx."""
+"""Mattermost REST API v4 client — synchronous httpx, read-only unless write mode is on."""
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -83,6 +87,58 @@ def _is_read_only(method: str, path: str) -> bool:
     return method == "POST" and any(p.fullmatch(path) for p in _READ_POSTS)
 
 
+class AuthError(RuntimeError):
+    """A 401 that survived the cookie host re-pull. Never swallowed."""
+
+
+def _cache_ttl() -> float:
+    try:
+        return float(os.environ.get("MATTERMOST_CACHE_TTL", "").strip() or 60)
+    except ValueError:
+        return 60.0
+
+
+# Fan-out across teams. Small: a user is in a handful of teams, and a stdio
+# server has a single client.
+_MAX_WORKERS = 8
+
+
+@dataclasses.dataclass
+class ChannelIndex:
+    """One walk over the user's teams: channels, membership, categories.
+
+    Shared by list_channels, get_unread and the muted/category filters of
+    search, so an agent turn that calls several of them pays for one walk.
+    """
+
+    teams: list[dict]
+    channels: dict[str, dict]  # channel_id -> channel, in team order, deduplicated
+    members: dict[str, dict]  # channel_id -> channel member of the current user
+    category: dict[str, str]  # channel_id -> sidebar category display name
+
+    def muted(self, cid: str) -> bool:
+        notify = (self.members.get(cid) or {}).get("notify_props") or {}
+        return notify.get("mark_unread") == "mention"
+
+    def unread(self, cid: str) -> int:
+        # ChannelMember.msg_count is how many messages the user has *viewed*;
+        # unread is the channel total minus that. Root counts match the
+        # client with collapsed threads, so prefer them when both sides have them.
+        m = self.members.get(cid)
+        c = self.channels.get(cid)
+        if not m or not c:
+            return 0
+        if "msg_count_root" in m and "total_msg_count_root" in c:
+            total, viewed = c["total_msg_count_root"], m["msg_count_root"]
+        else:
+            total, viewed = c.get("total_msg_count", 0), m.get("msg_count", 0)
+        return max(0, (total or 0) - (viewed or 0))
+
+    def mentions(self, cid: str) -> int:
+        m = self.members.get(cid) or {}
+        return m.get("mention_count_root", m.get("mention_count", 0)) or 0
+
+
 def _trust_env() -> bool:
     # Off when Mattermost must be reached directly while the process env
     # carries a proxy meant for everything else.
@@ -106,6 +162,10 @@ class MattermostClient:
         # cookie host is stale too and only a human paste fixes it. Retrying
         # further would just add ssh round-trips to every call.
         self._reauth_tried = False
+        self._lock = threading.Lock()
+        self._index: ChannelIndex | None = None
+        self._index_at = 0.0
+        self._pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="mm")
 
     # ------------------------------------------------------------------
     # Internals
@@ -143,6 +203,7 @@ class MattermostClient:
         self._auth = auth
         self._base = auth.url + "/api/v4"
         self._apply_auth(auth)
+        self.invalidate_cache()
         return True
 
     def _check_write(self, method: str, path: str) -> None:
@@ -169,7 +230,7 @@ class MattermostClient:
         if r.status_code == 401:
             if _retry and self._reauth():
                 return self._request(method, path, params=params, json=json, _retry=False)
-            raise RuntimeError(_auth_401_help(self._auth.mode))
+            raise AuthError(_auth_401_help(self._auth.mode))
         if r.status_code == 403:
             raise RuntimeError(f"Access denied: {url}")
         if r.status_code == 404:
@@ -190,6 +251,59 @@ class MattermostClient:
         if self._me is None:
             self._me = self._get("/users/me")
         return self._me
+
+    def _optional(self, fn, default):
+        """Run a best-effort lookup: degrade quietly, except on auth failure."""
+        try:
+            return fn()
+        except AuthError:
+            raise
+        except Exception:
+            return default
+
+    def invalidate_cache(self) -> None:
+        with self._lock:
+            self._index = None
+
+    def _channel_index(self) -> ChannelIndex:
+        with self._lock:
+            ttl = _cache_ttl()
+            if self._index is not None and ttl > 0 and time.monotonic() - self._index_at < ttl:
+                return self._index
+        index = self._build_index()
+        with self._lock:
+            self._index, self._index_at = index, time.monotonic()
+        return index
+
+    def _build_index(self) -> ChannelIndex:
+        uid = self._me_user()["id"]
+        teams = self._get(f"/users/{uid}/teams")
+
+        def per_team(team: dict):
+            tid = team["id"]
+            channels = self._get(f"/users/{uid}/teams/{tid}/channels")
+            members = self._optional(lambda: self._get(f"/users/{uid}/teams/{tid}/channels/members"), [])
+            cats = self._optional(lambda: self._get(f"/users/{uid}/teams/{tid}/channels/categories"), {})
+            return channels, members, cats
+
+        results = list(self._pool.map(per_team, teams))
+        dms = self._optional(lambda: self._get(f"/users/{uid}/channels", team_id="direct"), [])
+
+        channels: dict[str, dict] = {}
+        members: dict[str, dict] = {}
+        category: dict[str, str] = {}
+        for team_channels, team_members, cats in results:
+            for c in team_channels:
+                channels.setdefault(c["id"], c)
+            for m in team_members:
+                members.setdefault(m["channel_id"], m)
+            for cat in (cats or {}).get("categories", []):
+                name = cat.get("display_name") or cat.get("type", "")
+                for cid in cat.get("channel_ids", []):
+                    category.setdefault(cid, name)
+        for c in dms:
+            channels.setdefault(c["id"], c)
+        return ChannelIndex(teams=teams, channels=channels, members=members, category=category)
 
     def _parse_post(self, p: dict) -> Post:
         reactions = []
@@ -227,30 +341,6 @@ class MattermostClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def _channel_metadata(self, uid: str) -> tuple[dict[str, bool], dict[str, str]]:
-        """Walk all teams once, return (muted_by_channel, category_by_channel)."""
-        muted: dict[str, bool] = {}
-        category: dict[str, str] = {}
-        teams = self._get(f"/users/{uid}/teams")
-        for team in teams:
-            tid = team["id"]
-            try:
-                members = self._get(f"/users/{uid}/teams/{tid}/channels/members")
-                for m in members:
-                    notify = m.get("notify_props") or {}
-                    muted[m["channel_id"]] = notify.get("mark_unread") == "mention"
-            except Exception:
-                pass
-            try:
-                cats = self._get(f"/users/{uid}/teams/{tid}/channels/categories")
-                for cat in cats.get("categories", []):
-                    name = cat.get("display_name") or cat.get("type", "")
-                    for cid in cat.get("channel_ids", []):
-                        category[cid] = name
-            except Exception:
-                pass
-        return muted, category
-
     def list_channels(
         self,
         team_id: str | None = None,
@@ -258,37 +348,18 @@ class MattermostClient:
         include_muted: bool = True,
         category: str | None = None,
     ) -> list[Channel]:
-        me = self._me_user()
-        uid = me["id"]
-
-        channels: list[dict] = []
-        if team_id:
-            channels = self._get(f"/users/{uid}/teams/{_seg(team_id)}/channels")
-        else:
-            teams = self._get(f"/users/{uid}/teams")
-            for team in teams:
-                team_channels = self._get(f"/users/{uid}/teams/{team['id']}/channels")
-                channels.extend(team_channels)
-
-        if include_dm:
-            dm_channels = self._get(f"/users/{uid}/channels", team_id="direct")
-            channels.extend(dm_channels)
-
-        muted_map, category_map = self._channel_metadata(uid)
-
-        seen: set[str] = set()
+        index = self._channel_index()
         result: list[Channel] = []
-        for c in channels:
-            cid = c["id"]
-            if cid in seen:
+        for cid, c in index.channels.items():
+            is_dm = c.get("type") in ("D", "G")
+            if is_dm and not include_dm:
                 continue
-            seen.add(cid)
-            if not include_dm and c.get("type") in ("D", "G"):
+            if team_id and not is_dm and c.get("team_id") != team_id:
                 continue
-            is_muted = muted_map.get(cid, False)
+            is_muted = index.muted(cid)
             if not include_muted and is_muted:
                 continue
-            cat = category_map.get(cid)
+            cat = index.category.get(cid)
             if category is not None and (cat or "").lower() != category.lower():
                 continue
             result.append(Channel(
@@ -297,6 +368,7 @@ class MattermostClient:
                 display_name=c.get("display_name") or c.get("name", ""),
                 type=c.get("type", ""),
                 last_post_at=c.get("last_post_at", 0),
+                unread_count=index.unread(cid),
                 muted=is_muted,
                 category=cat,
             ))
@@ -417,38 +489,25 @@ class MattermostClient:
         include_muted: bool = False,
         category: str | None = None,
     ) -> list[dict]:
-        me = self._me_user()
-        uid = me["id"]
-        teams = self._get(f"/users/{uid}/teams")
-
-        _, category_map = self._channel_metadata(uid)
-
+        index = self._channel_index()
         result: list[dict] = []
-        for team in teams:
-            members = self._get(f"/users/{uid}/teams/{team['id']}/channels/members")
-            for m in members:
-                msg_count = m.get("msg_count_root", m.get("msg_count", 0))
-                mention_count = m.get("mention_count_root", m.get("mention_count", 0))
-                if msg_count == 0 and mention_count == 0:
-                    continue
-                notify = m.get("notify_props") or {}
-                is_muted = notify.get("mark_unread") == "mention"
-                if not include_muted and is_muted:
-                    continue
-                cat = category_map.get(m["channel_id"])
-                if category is not None and (cat or "").lower() != category.lower():
-                    continue
-                try:
-                    ch = self._get(f"/channels/{m['channel_id']}")
-                    display = ch.get("display_name") or ch.get("name", m["channel_id"])
-                except Exception:
-                    display = m["channel_id"]
-                result.append({
-                    "channel_id": m["channel_id"],
-                    "channel_name": display,
-                    "msg_count": msg_count,
-                    "mention_count": mention_count,
-                    "muted": is_muted,
-                    "category": cat,
-                })
+        for cid, c in index.channels.items():
+            msg_count = index.unread(cid)
+            mention_count = index.mentions(cid)
+            if msg_count == 0 and mention_count == 0:
+                continue
+            is_muted = index.muted(cid)
+            if not include_muted and is_muted:
+                continue
+            cat = index.category.get(cid)
+            if category is not None and (cat or "").lower() != category.lower():
+                continue
+            result.append({
+                "channel_id": cid,
+                "channel_name": c.get("display_name") or c.get("name", cid),
+                "msg_count": msg_count,
+                "mention_count": mention_count,
+                "muted": is_muted,
+                "category": cat,
+            })
         return result
