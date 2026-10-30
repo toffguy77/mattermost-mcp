@@ -90,9 +90,9 @@ def test_pick_matches_host_and_parent_domain():
         _c("MMUSERID", "u1"),
         _c("unrelated", "x"),
     ]
-    assert bl.pick_session_cookies(cookies, "mm.example.com") == {
-        "MMAUTHTOKEN": "tok", "MMCSRF": "csrf", "MMUSERID": "u1",
-    }
+    # The CSRF cookie lives on the parent domain, the token on the host:
+    # cookies are never mixed across domains.
+    assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "tok", "MMUSERID": "u1"}
 
 
 def test_pick_rejects_suffix_lookalike():
@@ -206,3 +206,55 @@ def test_login_saves_session_and_closes(monkeypatch):
     assert launched["url"] == "https://mm.example.com/login"
     assert browser.closed
     assert session.load()["MATTERMOST_TOKEN"] == "tok"
+
+
+def test_exact_host_cookies_beat_parent_domain():
+    cookies = [
+        _c("MMAUTHTOKEN", "tossed", ".example.com"),
+        _c("MMUSERID", "attacker", ".example.com"),
+        _c("MMAUTHTOKEN", "mine", "mm.example.com"),
+        _c("MMCSRF", "mine-csrf", "mm.example.com"),
+    ]
+    # All three come from one domain, and the exact host wins.
+    assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "mine", "MMCSRF": "mine-csrf"}
+
+
+def test_parent_domain_used_only_when_no_exact_host_cookie():
+    cookies = [_c("MMAUTHTOKEN", "shared", ".example.com"), _c("MMCSRF", "c", ".example.com")]
+    assert bl.pick_session_cookies(cookies, "mm.example.com") == {"MMAUTHTOKEN": "shared", "MMCSRF": "c"}
+
+
+def test_user_id_must_match_verified_user():
+    browser = FakeBrowser([[_c("MMAUTHTOKEN", "tok"), _c("MMUSERID", "someone-else")]])
+    clock = Clock()
+    with pytest.raises(SessionError, match="Timed out"):
+        bl.wait_for_session(browser, "mm.example.com", lambda *a: {"id": "u1", "username": "alice"},
+                            timeout=5, now=clock.now, sleep=clock.sleep, alive=lambda: True)
+
+
+def test_extra_args_cannot_reopen_debugging(monkeypatch):
+    monkeypatch.setenv("MATTERMOST_BROWSER_ARGS",
+                       "--headless=new --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222")
+    assert bl._extra_args() == ["--headless=new"]
+
+
+def test_pipe_connection_frames_messages():
+    import json as _json
+    import os
+    import threading
+
+    to_browser_r, to_browser_w = os.pipe()
+    from_browser_r, from_browser_w = os.pipe()
+
+    def fake_chrome():
+        buf = b""
+        while not buf.endswith(b"\0"):
+            buf += os.read(to_browser_r, 4096)
+        req = _json.loads(buf[:-1])
+        noise = _json.dumps({"method": "Target.targetCreated", "params": {}}).encode() + b"\0"
+        reply = _json.dumps({"id": req["id"], "result": {"cookies": [_c("MMAUTHTOKEN", "t")]}}).encode() + b"\0"
+        os.write(from_browser_w, noise + reply)
+
+    threading.Thread(target=fake_chrome, daemon=True).start()
+    conn = bl.PipeBrowser(write_fd=to_browser_w, read_fd=from_browser_r)
+    assert conn.get_cookies() == [_c("MMAUTHTOKEN", "t")]

@@ -16,6 +16,7 @@ import contextlib
 import itertools
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -147,18 +148,82 @@ class CdpBrowser:
             pass
 
 
-def _domain_matches(domain: str, host: str) -> bool:
-    domain = domain.lstrip(".").lower()
-    host = host.lower()
-    return host == domain or host.endswith("." + domain)
+class PipeBrowser:
+    """DevTools over --remote-debugging-pipe: NUL-framed JSON on two fds.
+
+    Nothing listens on a port, so no other local process can reach the
+    browser while it holds the user's fresh session.
+    """
+
+    def __init__(self, write_fd: int, read_fd: int):
+        self._w, self._r = write_fd, read_fd
+        self._buf = b""
+        self._ids = itertools.count(1)
+
+    def _recv(self, timeout: float) -> dict:
+        deadline = time.monotonic() + timeout
+        while b"\0" not in self._buf:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([self._r], [], [], left)[0]:
+                raise SessionError("The browser stopped answering.")
+            chunk = os.read(self._r, 65536)
+            if not chunk:
+                raise SessionError("The browser was closed before sign-in finished.")
+            self._buf += chunk
+        frame, _, self._buf = self._buf.partition(b"\0")
+        return json.loads(frame)
+
+    def _call(self, method: str, params: dict | None = None) -> dict:
+        msg_id = next(self._ids)
+        frame = json.dumps({"id": msg_id, "method": method, "params": params or {}}).encode()
+        os.write(self._w, frame + b"\0")
+        while True:
+            reply = self._recv(timeout=10)
+            if reply.get("id") == msg_id:
+                if "error" in reply:
+                    raise SessionError(f"Browser refused {method}: {reply['error'].get('message')}")
+                return reply.get("result", {})
+
+    def get_cookies(self) -> list[dict]:
+        return self._call("Storage.getCookies").get("cookies", [])
+
+    def close(self) -> None:
+        try:
+            self._call("Browser.close")
+        except Exception:
+            pass
+        for fd in (self._w, self._r):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def pick_session_cookies(cookies: list[dict], host: str) -> dict[str, str]:
-    out: dict[str, str] = {}
+    """The session cookies for `host`, all taken from one cookie domain.
+
+    Cookies set exactly for the host win. A parent-domain cookie (Mattermost's
+    "cookies for subdomains" setting) is used only when the host has none of
+    its own, so a sibling subdomain cannot toss in a different session.
+    """
+    host = host.lower()
+    by_domain: dict[str, dict[str, str]] = {}
     for c in cookies:
-        if c.get("name") in _COOKIES and c.get("value") and _domain_matches(c.get("domain", ""), host):
-            out.setdefault(c["name"], c["value"])
-    return out
+        name, value = c.get("name"), c.get("value")
+        if name not in _COOKIES or not value:
+            continue
+        domain = (c.get("domain") or "").lower()
+        bare = domain.lstrip(".")
+        if bare == host or host.endswith("." + bare):
+            by_domain.setdefault(domain, {}).setdefault(name, value)
+    exact = by_domain.get(host)
+    if exact and "MMAUTHTOKEN" in exact:
+        return exact
+    # Most specific parent domain that carries a token.
+    for domain in sorted(by_domain, key=lambda d: len(d.lstrip(".")), reverse=True):
+        if "MMAUTHTOKEN" in by_domain[domain]:
+            return by_domain[domain]
+    return {}
 
 
 def wait_for_session(
@@ -195,32 +260,84 @@ def wait_for_session(
             tried.add(token)
             try:
                 user = verify(token, cookies.get("MMCSRF", ""), cookies.get("MMUSERID", ""))
-                return cookies, user
             except SessionError:
-                pass
+                user = None
+            # A user-id cookie that names someone else means mixed-up cookies.
+            if user is not None and cookies.get("MMUSERID", user.get("id")) == user.get("id"):
+                return cookies, user
         sleep(interval)
     raise SessionError(f"Timed out after {int(timeout)}s waiting for you to sign in.")
 
 
+def _extra_args() -> list[str]:
+    """MATTERMOST_BROWSER_ARGS, minus anything that would re-open DevTools access."""
+    return [
+        a for a in os.environ.get("MATTERMOST_BROWSER_ARGS", "").split()
+        if not a.startswith("--remote-debugging")
+    ]
+
+
+_BASE_ARGS = ("--no-first-run", "--no-default-browser-check", "--new-window")
+
+
 def _launch(exe: str, profile: Path, url: str):
-    stale = profile / "DevToolsActivePort"
-    stale.unlink(missing_ok=True)
+    if sys.platform == "win32":
+        return _launch_tcp(exe, profile, url)
+    return _launch_pipe(exe, profile, url)
+
+
+_FD_SHIM = (
+    "import os,sys;a,b=int(sys.argv[1]),int(sys.argv[2]);os.dup2(a,3);os.dup2(b,4);"
+    "os.close(a);os.close(b);os.execv(sys.argv[3],sys.argv[3:])"
+)
+
+
+def _high_fd(fd: int) -> int:
+    import fcntl
+
+    high = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 10)
+    os.close(fd)
+    return high
+
+
+def _launch_pipe(exe: str, profile: Path, url: str):
+    # Chrome reads commands on fd 3 and writes replies on fd 4. Popen cannot
+    # renumber descriptors, so a two-line Python shim does it and then execs
+    # the browser (a shell's redirections only reach fd 9).
+    cmd_r, cmd_w = os.pipe()
+    out_r, out_w = os.pipe()
+    # Move the child's ends clear of 3 and 4 so the dup2s cannot clobber them.
+    cmd_r, out_w = (_high_fd(fd) for fd in (cmd_r, out_w))
+    args = [exe, f"--user-data-dir={profile}", "--remote-debugging-pipe", *_BASE_ARGS, *_extra_args(), url]
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-I", "-c", _FD_SHIM, str(cmd_r), str(out_w), *args],
+            pass_fds=(cmd_r, out_w),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    finally:
+        os.close(cmd_r)
+        os.close(out_w)
+    return proc, PipeBrowser(write_fd=cmd_w, read_fd=out_r)
+
+
+def _launch_tcp(exe: str, profile: Path, url: str):
+    # Windows: no fd inheritance for the pipe, so a loopback port picked by
+    # the browser. It is open only while the sign-in window is.
+    (profile / "DevToolsActivePort").unlink(missing_ok=True)
     args = [
         exe,
         f"--user-data-dir={profile}",
         "--remote-debugging-port=0",
         "--remote-debugging-address=127.0.0.1",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--new-window",
+        *_BASE_ARGS,
+        *_extra_args(),
+        url,
     ]
-    extra = os.environ.get("MATTERMOST_BROWSER_ARGS", "").split()
-    proc = subprocess.Popen(
-        [*args, *extra, url],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    proc = subprocess.Popen(args, **quiet)
     try:
         port = read_devtools_port(profile, alive=lambda: proc.poll() is None)
         return proc, CdpBrowser(browser_ws_url(port))
