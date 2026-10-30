@@ -1,24 +1,37 @@
 """Read Mattermost credentials.
 
-Cookie mode only. Session cookies are taken from a logged-in browser
-(DevTools -> Application -> Cookies -> your Mattermost host):
+Two auth modes:
 
-  MATTERMOST_URL=https://mattermost.example.com
-  MATTERMOST_TOKEN=<MMAUTHTOKEN cookie>
-  MATTERMOST_CSRF=<MMCSRF cookie>
-  MATTERMOST_USER_ID=<MMUSERID cookie>   # optional
+  token   A personal access token or bot token, sent as
+          `Authorization: Bearer <token>`. The usual choice.
 
-Cookies rather than a personal access token because some deployments put a
-reverse proxy in front of Mattermost that strips the Authorization header,
-and PATs are often disabled by admins anyway.
+            MATTERMOST_URL=https://mattermost.example.com
+            MATTERMOST_ACCESS_TOKEN=<personal access token>
+
+  cookie  Session cookies taken from a logged-in browser (DevTools ->
+          Application -> Cookies -> your Mattermost host). For servers where
+          PATs are disabled, or where a reverse proxy strips the
+          Authorization header.
+
+            MATTERMOST_URL=https://mattermost.example.com
+            MATTERMOST_TOKEN=<MMAUTHTOKEN cookie>
+            MATTERMOST_CSRF=<MMCSRF cookie>       # needed for write tools
+            MATTERMOST_USER_ID=<MMUSERID cookie>  # optional
+
+MATTERMOST_AUTH_MODE=token|cookie forces a mode. Without it, the first source
+(in the order below) that holds any credential decides: MATTERMOST_ACCESS_TOKEN
+there means token mode, MATTERMOST_TOKEN alone means cookie mode. A lower
+source never overrides a higher one.
 
 Sources, first non-empty value wins, resolved per field:
 
   1. MATTERMOST_* environment variables.
 
   2. A cookie host: a flat KEY=VALUE export on another machine, pulled over
-     ssh and cached locally. This lets several machines share one cookie that
-     is rotated in a single place. Off unless MATTERMOST_COOKIE_HOST is set.
+     ssh and cached locally. This lets several machines share one credential
+     that is rotated in a single place. Off unless MATTERMOST_COOKIE_HOST is
+     set. It may only supply credentials, never policy (auth mode, write
+     mode).
 
   3. OS keychain (macOS Keychain / `pass` on Linux) — manual bootstrap.
 
@@ -56,6 +69,7 @@ _DEFAULT_SERVICE = "mattermost-mcp"
 # ignored: the file must not be able to smuggle arbitrary env into the process.
 _REMOTE_KEYS = (
     "MATTERMOST_URL",
+    "MATTERMOST_ACCESS_TOKEN",
     "MATTERMOST_TOKEN",
     "MATTERMOST_CSRF",
     "MATTERMOST_USER_ID",
@@ -64,13 +78,22 @@ _REMOTE_KEYS = (
 _DISABLED_HOSTS = {"", "off", "none", "no", "0"}
 
 
+AUTH_MODES = ("token", "cookie")
+
+
 @dataclasses.dataclass
 class MattermostAuth:
     url: str
-    token: str
+    token: str = ""  # MMAUTHTOKEN cookie (cookie mode)
     csrf: str = ""
     user_id: str = ""
-    mode: str = "cookie"  # legacy field, always "cookie"
+    mode: str = "cookie"
+    access_token: str = ""  # PAT / bot token (token mode)
+
+    @property
+    def secret(self) -> str:
+        """The credential that identifies the session in the active mode."""
+        return self.access_token if self.mode == "token" else self.token
 
 
 def _env(key: str) -> str:
@@ -305,8 +328,41 @@ def remote_enabled() -> bool:
 # Resolution
 # ---------------------------------------------------------------------------
 
+_SETUP_HINT = (
+    "Set MATTERMOST_URL and MATTERMOST_ACCESS_TOKEN (a personal access token or "
+    "bot token), or MATTERMOST_TOKEN + MATTERMOST_CSRF browser cookies for "
+    "cookie mode. See the README for the cookie host and keychain sources."
+)
+
+
+def _detect_mode(from_remote) -> str:
+    """Pick the mode from the highest-priority source that holds a credential."""
+    if _env("MATTERMOST_ACCESS_TOKEN"):
+        return "token"
+    if _env("MATTERMOST_TOKEN"):
+        return "cookie"
+    if from_remote("MATTERMOST_ACCESS_TOKEN"):
+        return "token"
+    if from_remote("MATTERMOST_TOKEN"):
+        return "cookie"
+    try:
+        if _keychain("access_token", required=False):
+            return "token"
+    except RuntimeError:
+        # An unreadable keychain only means "no token there"; the cookie
+        # lookups that follow report the real problem with full context.
+        pass
+    return "cookie"
+
+
 def get_auth() -> MattermostAuth:
-    """Return cookie-mode auth config. PAT/Bearer is no longer supported."""
+    """Resolve the auth mode and the credentials it needs."""
+    explicit = _env("MATTERMOST_AUTH_MODE").lower()
+    if explicit and explicit not in AUTH_MODES:
+        raise RuntimeError(
+            f"MATTERMOST_AUTH_MODE={explicit!r} is not valid; use 'token' or 'cookie'."
+        )
+
     remote: dict[str, str] | None = None
 
     def _from_remote(key: str) -> str:
@@ -333,10 +389,17 @@ def get_auth() -> MattermostAuth:
                 f"nothing either — check `ssh {_remote_host()} cat {_remote_path()}`."
             ) from e
 
-    url = _pick("MATTERMOST_URL", "url").rstrip("/")
-    token = _pick("MATTERMOST_TOKEN", "token")
-    csrf = _pick("MATTERMOST_CSRF", "csrf", required=False)
-    user_id = _pick("MATTERMOST_USER_ID", "user_id", required=False)
+    try:
+        mode = explicit or _detect_mode(_from_remote)
+        url = _pick("MATTERMOST_URL", "url").rstrip("/")
+        if mode == "token":
+            access_token = _pick("MATTERMOST_ACCESS_TOKEN", "access_token")
+            return MattermostAuth(url=url, mode="token", access_token=access_token)
+        token = _pick("MATTERMOST_TOKEN", "token")
+        csrf = _pick("MATTERMOST_CSRF", "csrf", required=False)
+        user_id = _pick("MATTERMOST_USER_ID", "user_id", required=False)
+    except RuntimeError as e:
+        raise RuntimeError(f"{e}\n{_SETUP_HINT}") from e
     return MattermostAuth(url=url, token=token, csrf=csrf, user_id=user_id)
 
 

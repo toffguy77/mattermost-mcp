@@ -8,22 +8,22 @@ Every behaviour task is red → green → refactor: first write the failing test
 
 ## 2. Authentication (spec: authentication)
 
-- [ ] 2.1 `tests/test_auth_modes.py`: env `MATTERMOST_ACCESS_TOKEN` → `get_auth().mode == "token"` with the token set. Then implement the access-token field and the mode in `auth.py`. Verify: the new test passes and `tests/test_auth_remote.py` is unchanged and green.
-- [ ] 2.2 `tests/test_auth_modes.py`: the mode-selection matrix. Cases: env cookie beats keychain token (the keychain is never called), both in env → token, explicit `cookie`, explicit `token`, invalid mode → error lists both values, cookie host supplies the access token, keychain `access_token` with explicit token mode. Implement the resolution order from design D4. Verify: the matrix passes.
-- [ ] 2.3 `tests/test_auth_modes.py`: the cookie host ignores `MATTERMOST_AUTH_MODE` / `MATTERMOST_ENABLE_WRITE` lines. Verify the test passes.
-- [ ] 2.4 `tests/test_client_auth_headers.py`:
+- [x] 2.1 `tests/test_auth_modes.py`: env `MATTERMOST_ACCESS_TOKEN` → `get_auth().mode == "token"` with the token set. Then implement the access-token field and the mode in `auth.py`. Verify: the new test passes and `tests/test_auth_remote.py` is unchanged and green.
+- [x] 2.2 `tests/test_auth_modes.py`: the mode-selection matrix. Cases: env cookie beats keychain token (the keychain is never called), both in env → token, explicit `cookie`, explicit `token`, invalid mode → error lists both values, cookie host supplies the access token, keychain `access_token` with explicit token mode. Implement the resolution order from design D4. Verify: the matrix passes.
+- [x] 2.3 `tests/test_auth_modes.py`: the cookie host ignores `MATTERMOST_AUTH_MODE` / `MATTERMOST_ENABLE_WRITE` lines. Verify the test passes.
+- [x] 2.4 `tests/test_client_auth_headers.py`:
   - token mode sends Bearer, with no Cookie or CSRF;
   - cookie mode headers are identical to before;
   - a re-pull that switches the mode leaves no stale headers.
 
   Implement D5 in `client.py`. Verify: the tests pass, and so do the existing `test_client_reauth.py` tests.
-- [ ] 2.5 `tests/test_client_auth_headers.py`:
+- [x] 2.5 `tests/test_client_auth_headers.py`:
   - a 401 in token mode → the message mentions "access token" and "Personal Access Tokens" and does not contain the token;
   - a 401 in cookie mode → the old text plus `MATTERMOST_AUTH_HELP`;
   - nothing configured → the error names `MATTERMOST_URL` and `MATTERMOST_ACCESS_TOKEN`.
 
   Verify the tests pass.
-- [ ] 2.6 Update the `auth.py` module docstring for both modes. Verify: it reads correctly and `ruff` is clean.
+- [x] 2.6 Update the `auth.py` module docstring for both modes. Verify: it reads correctly and `ruff` is clean.
 
 ## 3. Write guard (spec: write-tools, "Write mode is opt-in")
 

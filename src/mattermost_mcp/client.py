@@ -40,11 +40,19 @@ _AUTH_401_HELP = (
     "once and still returned 401."
 )
 
+_TOKEN_401_HELP = (
+    "Mattermost rejected the access token (401): it is invalid, expired or "
+    "revoked. Create a new one under Profile > Security > Personal Access "
+    "Tokens (or a bot token under Integrations > Bot Accounts) and update "
+    "MATTERMOST_ACCESS_TOKEN."
+)
 
-def _auth_401_help() -> str:
-    # Deployments wire cookie rotation differently; let them say how theirs works.
+
+def _auth_401_help(mode: str = "cookie") -> str:
+    base = _TOKEN_401_HELP if mode == "token" else _AUTH_401_HELP
+    # Deployments wire credential rotation differently; let them say how theirs works.
     extra = os.environ.get("MATTERMOST_AUTH_HELP", "").strip()
-    return f"{_AUTH_401_HELP}\n{extra}" if extra else _AUTH_401_HELP
+    return f"{base}\n{extra}" if extra else base
 
 
 def _trust_env() -> bool:
@@ -75,14 +83,19 @@ class MattermostClient:
     # ------------------------------------------------------------------
 
     def _apply_auth(self, auth) -> None:
+        # Clear both modes' headers first: a cookie host re-pull may switch
+        # modes, and a request must never carry two identities.
+        for h in ("Authorization", "Cookie", "X-CSRF-Token"):
+            self._http.headers.pop(h, None)
+        if auth.mode == "token":
+            self._http.headers["Authorization"] = f"Bearer {auth.access_token}"
+            return
         cookie = f"MMAUTHTOKEN={auth.token}"
         if auth.user_id:
             cookie += f"; MMUSERID={auth.user_id}"
         self._http.headers["Cookie"] = cookie
         if auth.csrf:
             self._http.headers["X-CSRF-Token"] = auth.csrf
-        else:
-            self._http.headers.pop("X-CSRF-Token", None)
 
     def _reauth(self) -> bool:
         """Re-pull cookies from the cookie host after a 401.
@@ -96,7 +109,7 @@ class MattermostClient:
         if not refresh_remote():
             return False
         auth = get_auth()
-        if not auth.token or auth.token == self._auth.token:
+        if not auth.secret or auth.secret == self._auth.secret:
             return False
         self._auth = auth
         self._base = auth.url + "/api/v4"
@@ -112,7 +125,7 @@ class MattermostClient:
         if r.status_code == 401:
             if _retry and self._reauth():
                 return self._request(method, path, params=params, json=json, _retry=False)
-            raise RuntimeError(_auth_401_help())
+            raise RuntimeError(_auth_401_help(self._auth.mode))
         if r.status_code == 403:
             raise RuntimeError(f"Access denied: {url}")
         if r.status_code == 404:
