@@ -12,6 +12,7 @@ later sign-in completes without any typing.
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import os
@@ -118,7 +119,8 @@ class CdpBrowser:
     def __init__(self, ws_url: str):
         from websockets.sync.client import connect
 
-        self._ws = connect(ws_url, max_size=None, open_timeout=10)
+        self._stack = contextlib.ExitStack()
+        self._ws = self._stack.enter_context(connect(ws_url, max_size=None, open_timeout=10))
         self._ids = itertools.count(1)
 
     def _call(self, method: str, params: dict | None = None) -> dict:
@@ -140,7 +142,7 @@ class CdpBrowser:
         except Exception:
             pass
         try:
-            self._ws.close()
+            self._stack.close()
         except Exception:
             pass
 

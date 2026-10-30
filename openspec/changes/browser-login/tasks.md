@@ -28,7 +28,7 @@ Every behaviour task is red → green → refactor: first write the failing test
   - Timeout → error; browser closed early → error.
 
   Implement and verify.
-- [ ] 3.4 Live check: `tests/live/test_browser_live.py` runs a real headless Chromium against a local HTTP server that sets the cookies. It is skipped without `MATTERMOST_TEST_BROWSER`. Run it once locally with a downloaded Chromium and record the result.
+- [x] 3.4 Live check: `tests/live/test_browser_live.py` runs a real headless Chromium against a local HTTP server that sets the cookies. It is skipped without `MATTERMOST_TEST_BROWSER`. Run it once locally with a downloaded Chromium and record the result.
 
 ## 4. Password and Firefox (spec: session-login)
 
