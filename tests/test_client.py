@@ -314,3 +314,10 @@ def test_path_arguments_are_quoted():
     except Exception:
         pass
     assert route.called
+
+
+@pytest.mark.parametrize("bad", ["", ".", ".."])
+def test_dot_segments_are_refused(bad):
+    client = _make_client()
+    with pytest.raises(ValueError, match="invalid path argument"):
+        client.get_thread(post_id=bad)

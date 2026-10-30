@@ -16,9 +16,13 @@ def _seg(value: str) -> str:
     """Quote a tool argument as a single URL path segment.
 
     IDs and usernames come from the model; unquoted, "../" or "?" in them
-    would reach other API endpoints with the user's session.
+    would reach other API endpoints with the user's session. "." and ".."
+    survive quoting and are still dot-segments, so they are refused outright.
     """
-    return quote(str(value), safe="")
+    value = str(value)
+    if value in {"", ".", ".."}:
+        raise ValueError(f"invalid path argument: {value!r}")
+    return quote(value, safe="")
 
 
 def _iso_to_ms(iso: str) -> int:
