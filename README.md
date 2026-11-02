@@ -4,6 +4,8 @@
 [![PyPI](https://img.shields.io/pypi/v/mattermost-mcp-server)](https://pypi.org/project/mattermost-mcp-server/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+[![Mattermost MCP server](https://mcprush.com/badge/toffguy77-mattermost-mcp/card.svg)](https://mcprush.com/to/toffguy77-mattermost-mcp?ref=badge)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Mattermost](https://mattermost.com). It lets an AI agent (Claude, Cursor,
 VS Code, any MCP client) catch up on your unreads and mentions, read channels,
