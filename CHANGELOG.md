@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [1.1.0] - 2026-10-30
+## [1.1.0] - 2026-11-02
 
 ### Added
 
@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
 - Expired sessions are refreshed without a restart: running servers pick up
   a new `login`, and with `MATTERMOST_AUTO_LOGIN=1` they open the sign-in
   window themselves, one window shared by all server processes.
+
+### Changed
+
+- `get_unread` description reworded to "unread counts"; the tool returns
+  counts only, never message text.
 
 ## [1.0.0] - 2026-10-30
 

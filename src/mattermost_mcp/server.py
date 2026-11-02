@@ -207,7 +207,7 @@ def _register_read_tools(mcp: FastMCP, get_client) -> None:
         include_muted: bool = False,
         category: str | None = None,
     ) -> list[dict]:
-        """Get unread message counts and mention badges per channel.
+        """Get unread counts and mention badges per channel.
 
         By default skips channels muted in the sidebar (same behavior as the
         client unread badge). Pass include_muted=True to see every unread.
